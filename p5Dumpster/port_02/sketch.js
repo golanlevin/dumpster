@@ -55,6 +55,17 @@ function setup() {
   loadClips(function() {
     textsReady = true;
     console.log('Text snippets loaded:', Object.keys(Files).length);
+
+    // Pick a random valid breakup as the initial selection.
+    let randomId;
+    do { randomId = Math.floor(random(N_BREAKUP_DATABASE_RECORDS_20K)); }
+    while (!BM.bups[randomId].VALID);
+    const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(randomId);
+    _enactSelection(heartId);
+
+    // Temporary: fixed breakup for debugging histogram flag issue.
+    // const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(10158);
+    // _enactSelection(heartId);
   });
 }
 
@@ -96,6 +107,7 @@ function draw() {
 
   drawDraft(); 
 }
+
 
 function drawDraft(){
   textFont("Helvetica");

@@ -118,7 +118,7 @@ class DumpsterHistogram {
     if (index < this.indexLo || index > this.indexHi) return -1;
     const warped = (index - this.indexLo) / (this.indexHi - this.indexLo);
     let frac;
-    if (index <= this.dataIndexOfCursor) {
+    if (warped <= this.mousePivot) {
       frac = this.mousePivot * (1.0 - Math.pow(1.0 - warped / this.mousePivot, 1.0 / this.mousePower));
     } else {
       frac = this.mousePivot + (1.0 - this.mousePivot) *
@@ -332,6 +332,8 @@ class DumpsterHistogram {
     const p = this.tmpPixelBounds[0];
     const q = this.tmpPixelBounds[1];
     const t = this.tmpPixelBounds[2];
+
+
     if (this.bMouseInside) {
       this.centerOfBoundsX = Math.min(q, Math.max(p, this.centerOfBoundsX));
       this.centerOfBoundsX = 0.6 * this.centerOfBoundsX + 0.4 * ((p + q) / 2.0);
