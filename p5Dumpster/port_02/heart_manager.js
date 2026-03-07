@@ -1,0 +1,441 @@
+// Ported from HeartManager.pde
+// References global PBM (ParagraphBalloonManager).
+
+class HeartManager {
+
+  constructor(KOS, BM) {
+    this.KOS = KOS;
+    this.BM  = BM;
+
+    this.myMouseX   = 0;
+    this.myMouseY   = 0;
+    this.bMousePressed = false;
+
+    this.mouseOverHeartID     = DUMPSTER_INVALID;
+    this.mouseClickedHeartID  = DUMPSTER_INVALID;
+    this.mouseSelectedHeartID = DUMPSTER_INVALID;
+    this.bCurrentlyDraggingSelectedHeart = false;
+
+    // handyPoint: reusable {px, py} object for getHeartLoc
+    this._handyPoint = { px: DUMPSTER_INVALID, py: DUMPSTER_INVALID };
+
+    this.hearts = new Array(MAX_N_HEARTS);
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      this.hearts[i] = new Heart(i, BM);
+    }
+  }
+
+  //====================================================================
+  decimateCurrentHeartPopulation() {
+    const nExtantBalloons = PBM.nExtantBalloons;
+    const nToKill = 10;
+    for (let i = 0; i < nToKill; i++) {
+      const randId = Math.floor(Math.random() * MAX_N_HEARTS);
+      const h = this.hearts[randId];
+      if (h.mouseState === STATE_MOUSE_IGNORE && h.existState === STATE_HEART_EXISTS) {
+        let bRandIdOk = true;
+        for (let b = 0; b < nExtantBalloons; b++) {
+          if (randId === PBM.balloons[b].heartId) { bRandIdOk = false; break; }
+        }
+        if (bRandIdOk) h.initiateDisappearance();
+      }
+    }
+  }
+
+  //====================================================================
+  addSelectedBreakupFromOutsideAndGetNewHeartId(newBreakupIndex) {
+    let newHeartId = DUMPSTER_INVALID;
+    let bBreakupAlreadyPresent = false;
+    let indexOfHeartAlreadyContaining = DUMPSTER_INVALID;
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const Hi = this.hearts[i];
+      if (Hi.existState === STATE_HEART_EXISTS && newBreakupIndex === Hi.breakupId) {
+        bBreakupAlreadyPresent = true;
+        indexOfHeartAlreadyContaining = i;
+      }
+    }
+
+    if (bBreakupAlreadyPresent) {
+      if (indexOfHeartAlreadyContaining !== this.mouseSelectedHeartID) {
+        this.causeHeartToBecomeTheMainSelection(indexOfHeartAlreadyContaining);
+        newHeartId = indexOfHeartAlreadyContaining;
+      }
+    } else {
+      const nExtantBalloons = PBM.nExtantBalloons;
+
+      // Find an available (GONE) heart slot
+      let indexOfAvailableHeart = DUMPSTER_INVALID;
+      for (let j = 0; j < MAX_N_HEARTS; j++) {
+        if (this.hearts[j].existState === STATE_HEART_GONE) {
+          indexOfAvailableHeart = j;
+          break;
+        }
+      }
+
+      // If no GONE slot, kill the least-similar heart not attached to a balloon
+      if (indexOfAvailableHeart === DUMPSTER_INVALID) {
+        let leastSim = 1.0;
+        let heartIdWithLeastSim = DUMPSTER_INVALID;
+        for (let i = 0; i < MAX_N_HEARTS; i++) {
+          const hSim = this.BM.SIMILARITIES[this.hearts[i].breakupId];
+          if (hSim < leastSim) {
+            let notAttached = true;
+            for (let b = 0; b < nExtantBalloons; b++) {
+              if (i === PBM.balloons[b].heartId) { notAttached = false; break; }
+            }
+            if (notAttached) { leastSim = hSim; heartIdWithLeastSim = i; }
+          }
+        }
+        if (heartIdWithLeastSim !== DUMPSTER_INVALID) {
+          indexOfAvailableHeart = heartIdWithLeastSim;
+        } else {
+          // Emergency fallback: first heart not attached to a balloon
+          for (let i = 0; i < MAX_N_HEARTS; i++) {
+            let notAttached = true;
+            for (let b = 0; b < nExtantBalloons; b++) {
+              if (i === PBM.balloons[b].heartId) { notAttached = false; break; }
+            }
+            if (notAttached) { indexOfAvailableHeart = i; break; }
+          }
+        }
+      }
+
+      if (indexOfAvailableHeart !== DUMPSTER_INVALID) {
+        this.hearts[indexOfAvailableHeart].initiate(newBreakupIndex, 1.0);
+        if (indexOfAvailableHeart !== this.mouseSelectedHeartID) {
+          this.causeHeartToBecomeTheMainSelection(indexOfAvailableHeart);
+          newHeartId = indexOfAvailableHeart;
+        }
+      }
+    }
+    return newHeartId;
+  }
+
+  //====================================================================
+  causeHeartToBecomeTheMainSelection(heartId) {
+    if (heartId <= DUMPSTER_INVALID || heartId >= MAX_N_HEARTS) return;
+    if (this.hearts[heartId].existState === STATE_HEART_GONE) return;
+
+    if (heartId !== this.mouseSelectedHeartID && this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+      this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_IGNORE);
+    }
+
+    this.mouseSelectedHeartID = heartId;
+    this.mouseClickedHeartID  = heartId;
+    this.hearts[heartId].setMouseState(STATE_MOUSE_SELECT);
+    this.bCurrentlyDraggingSelectedHeart = false;
+
+    this.KOS.currentSelectedBreakupId = this.hearts[heartId].breakupId;
+  }
+
+  //====================================================================
+  computeMeanSimilarity() {
+    let nExtant = 0;
+    let meanSim = 0;
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      if (this.hearts[i].existState === STATE_HEART_EXISTS) {
+        meanSim += this.hearts[i].similarityToSelected;
+        nExtant++;
+      }
+    }
+    return nExtant > 0 ? meanSim / nExtant : 0;
+  }
+
+  //====================================================================
+  removeBadMatchingHeartRandomly(meanSimilarity) {
+    if (Math.random() >= HM_SHUFFLE_PROBABILITY) return;
+    const nExtantBalloons = PBM.nExtantBalloons;
+    const threshold = (1.0 - HM_SHUFFLE_SLOP) * meanSimilarity + HM_SHUFFLE_SLOP * 1.0;
+
+    let found = false;
+    let randHeartId = 0;
+    let nTries = 0;
+    do {
+      randHeartId = Math.floor(Math.random() * MAX_N_HEARTS);
+      const h = this.hearts[randHeartId];
+      if (h.mouseState === STATE_MOUSE_IGNORE && h.existState === STATE_HEART_EXISTS) {
+        const sim = h.similarityToSelected;
+        if (sim <= threshold || meanSimilarity < 0.01) {
+          let notAttached = true;
+          for (let b = 0; b < nExtantBalloons; b++) {
+            if (randHeartId === PBM.balloons[b].heartId) { notAttached = false; break; }
+          }
+          if (notAttached) found = true;
+        }
+      }
+      nTries++;
+    } while (!found && nTries < 20);
+
+    if (found) this.hearts[randHeartId].initiateDisappearance();
+  }
+
+  //====================================================================
+  addWellMatchingHeartRandomly(meanSimilarity) {
+    if (Math.random() >= 0.975) return;
+
+    let indexOfAvailableHeart = DUMPSTER_INVALID;
+    for (let j = 0; j < MAX_N_HEARTS; j++) {
+      if (this.hearts[j].existState === STATE_HEART_GONE) {
+        indexOfAvailableHeart = j;
+        break;
+      }
+    }
+    if (indexOfAvailableHeart === DUMPSTER_INVALID) return;
+
+    const threshold = (1.0 - HM_SHUFFLE_SLOP) * meanSimilarity;
+    let newBreakupIndex = Math.floor(Math.random() * N_BREAKUP_DATABASE_RECORDS_20K);
+    let sim = 0;
+    let nTries = 0;
+
+    if (meanSimilarity >= 0.10) {
+      do {
+        let alreadyRepresented = false;
+        let badData = false;
+        do {
+          newBreakupIndex = Math.floor(Math.random() * N_BREAKUP_DATABASE_RECORDS_20K);
+          alreadyRepresented = false;
+          badData = false;
+          for (let i = 0; i < MAX_N_HEARTS; i++) {
+            if (newBreakupIndex === this.hearts[i].breakupId) { alreadyRepresented = true; break; }
+          }
+          if (!this.BM.bups[newBreakupIndex].VALID) badData = true;
+        } while (alreadyRepresented || badData);
+
+        sim = this.BM.SIMILARITIES[newBreakupIndex];
+        nTries++;
+      } while (sim < threshold && nTries < 80);
+    } else {
+      sim = this.BM.SIMILARITIES[newBreakupIndex];
+    }
+
+    this.hearts[indexOfAvailableHeart].initiate(newBreakupIndex, sim);
+  }
+
+  //====================================================================
+  performScheduledShuffling() {
+    const meanSim = this.computeMeanSimilarity();
+    this.removeBadMatchingHeartRandomly(meanSim);
+    this.addWellMatchingHeartRandomly(meanSim);
+  }
+
+  //====================================================================
+  getHeartIdWithBreakupId(whichBreakup) {
+    if (whichBreakup < 0 || whichBreakup >= N_BREAKUP_DATABASE_RECORDS) return DUMPSTER_INVALID;
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const hi = this.hearts[i];
+      if (hi.breakupId === whichBreakup && hi.existState !== STATE_HEART_GONE) {
+        return hi.heartId;
+      }
+    }
+    return DUMPSTER_INVALID;
+  }
+
+  getHeartLoc(whichHeartId) {
+    this._handyPoint.px = DUMPSTER_INVALID;
+    this._handyPoint.py = DUMPSTER_INVALID;
+    if (whichHeartId >= 0 && whichHeartId < MAX_N_HEARTS) {
+      const hi = this.hearts[whichHeartId];
+      if (hi.existState !== STATE_HEART_GONE) {
+        this._handyPoint.px = hi.px;
+        this._handyPoint.py = hi.py;
+      }
+    }
+    return this._handyPoint;
+  }
+
+  //====================================================================
+  informOfMouse(mx, my, bm) {
+    this.bMousePressed = bm;
+    this.myMouseX = mx;
+    this.myMouseY = my;
+  }
+
+  mousePressed() {
+    this.mouseClickedHeartID = DUMPSTER_INVALID;
+    this.bCurrentlyDraggingSelectedHeart = false;
+    const whichClicked = this._whichHeartIsMouseInside();
+
+    if (whichClicked !== DUMPSTER_INVALID) {
+      if (whichClicked !== this.mouseSelectedHeartID && this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+        this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_IGNORE);
+      }
+      this.mouseSelectedHeartID = whichClicked;
+      this.mouseClickedHeartID  = whichClicked;
+      this.hearts[whichClicked].setMouseState(STATE_MOUSE_DRAG);
+      this.bCurrentlyDraggingSelectedHeart = true;
+      this.KOS.currentSelectedBreakupId = this.hearts[whichClicked].breakupId;
+    }
+  }
+
+  refreshHeartColors(BM, clickedHeartBreakupID) {
+    if (clickedHeartBreakupID <= DUMPSTER_INVALID || clickedHeartBreakupID >= N_BREAKUP_DATABASE_RECORDS) return;
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const heartBupId = this.hearts[i].breakupId;
+      if (heartBupId !== DUMPSTER_INVALID) {
+        this.hearts[i].setSimilarityToSelected(BM.SIMILARITIES[heartBupId]);
+      }
+    }
+  }
+
+  mouseReleased() {
+    this.bCurrentlyDraggingSelectedHeart = false;
+  }
+
+  //====================================================================
+  renderHeartObjects() {
+    ellipseMode(CENTER);
+    noStroke();
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      this.hearts[i].render();
+    }
+    if (this.mouseOverHeartID !== DUMPSTER_INVALID && this.mouseOverHeartID !== this.mouseSelectedHeartID) {
+      this.hearts[this.mouseOverHeartID].renderMouseOver();
+    }
+    if (this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+      this.hearts[this.mouseSelectedHeartID].renderMouseSelected();
+    }
+  }
+
+  //====================================================================
+  _whichHeartIsMouseInside() {
+    if (this.myMouseX <= HEART_WALL_L || this.myMouseX >= HEART_WALL_R ||
+        this.myMouseY <= HEART_WALL_T || this.myMouseY >= HEART_WALL_B) return DUMPSTER_INVALID;
+
+    const mxbin = Math.floor(7.99999 * (this.myMouseX - HEART_WALL_L) / HEART_AREA_W);
+    const mybin = Math.floor(7.99999 * (this.myMouseY - HEART_WALL_T) / HEART_AREA_H);
+    const myMouseXbins = bindices[mxbin];
+    const myMouseYbins = bindices[mybin];
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const Hi = this.hearts[i];
+      if (Hi.existState !== STATE_HEART_GONE) {
+        if ((myMouseXbins & Hi.xbins) > 0 && (myMouseYbins & Hi.ybins) > 0) {
+          if (this.myMouseX >= Hi.xMin && this.myMouseX <= Hi.xMax &&
+              this.myMouseY >= Hi.yMin && this.myMouseY <= Hi.yMax) {
+            const dx = Hi.px - this.myMouseX;
+            const dy = Hi.py - this.myMouseY;
+            if ((dx * dx + dy * dy) < Hi.rad_sq) return i;
+          }
+        }
+      }
+    }
+    return DUMPSTER_INVALID;
+  }
+
+  //====================================================================
+  mouseTestHearts() {
+    this.mouseOverHeartID = this._whichHeartIsMouseInside();
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      this.hearts[i].setMouseState(STATE_MOUSE_IGNORE);
+    }
+
+    if (this.mouseOverHeartID !== DUMPSTER_INVALID) {
+      if (this.bMousePressed) {
+        if (!this.bCurrentlyDraggingSelectedHeart && this.mouseOverHeartID !== this.mouseSelectedHeartID) {
+          this.hearts[this.mouseOverHeartID].setMouseState(STATE_MOUSE_OVER);
+        }
+      } else {
+        if (this.mouseOverHeartID !== this.mouseSelectedHeartID) {
+          this.hearts[this.mouseOverHeartID].setMouseState(STATE_MOUSE_OVER);
+        } else {
+          this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_SELECT);
+        }
+      }
+    }
+
+    if (this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+      this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_SELECT);
+      if (this.mouseOverHeartID === this.mouseSelectedHeartID && this.bMousePressed) {
+        if (this.bCurrentlyDraggingSelectedHeart) {
+          this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_DRAG);
+        }
+      }
+    }
+
+    if (this.mouseOverHeartID !== DUMPSTER_INVALID) {
+      const Hi = this.hearts[this.mouseOverHeartID];
+      const dx = Hi.px - this.myMouseX;
+      const dy = Hi.py - this.myMouseY;
+      if ((dx * dx + dy * dy) < Hi.rad_sq) {
+        Hi.accumulateForce(HEART_MOUSE_K * dx, HEART_MOUSE_K * dy);
+      }
+    }
+
+    if (this.mouseOverHeartID !== DUMPSTER_INVALID) {
+      this.KOS.currentMouseoverBreakupId = this.hearts[this.mouseOverHeartID].breakupId;
+    } else {
+      if (this.myMouseX >= HEART_WALL_L && this.myMouseX < HEART_WALL_R &&
+          this.myMouseY >= HEART_WALL_T && this.myMouseY < HEART_WALL_B) {
+        this.KOS.currentMouseoverBreakupId = DUMPSTER_INVALID;
+      }
+    }
+  }
+
+  //====================================================================
+  updateHearts() {
+    this.hearts[0].setMouseInformation(this.bCurrentlyDraggingSelectedHeart, this.myMouseX, this.myMouseY);
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      this.hearts[i].accumulateGravityForce();
+      this.hearts[i].accumulateCentralizingForce();
+    }
+
+    if (this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+      const selH = this.hearts[this.mouseSelectedHeartID];
+      const spx = selH.px, spy = selH.py, spr = selH.rad;
+      for (let i = 0; i < MAX_N_HEARTS; i++) {
+        if (i !== this.mouseSelectedHeartID) {
+          this.hearts[i].accumulateAttractionForceToSelected(spx, spy, spr);
+        } else {
+          if (this.bMousePressed) {
+            this.hearts[this.mouseSelectedHeartID].px = this.myMouseX;
+            this.hearts[this.mouseSelectedHeartID].py = this.myMouseY;
+            this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_DRAG);
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const Hi = this.hearts[i];
+      if (Hi.existState === STATE_HEART_GONE) continue;
+
+      const xi = Hi.px, yi = Hi.py;
+      const ixMin = Hi.xMin, ixMax = Hi.xMax;
+      const iyMin = Hi.yMin, iyMax = Hi.yMax;
+      const irad  = Hi.rad;
+      const ixbins = Hi.xbins, iybins = Hi.ybins;
+
+      for (let j = 0; j < i; j++) {
+        const Hj = this.hearts[j];
+        if (Hj.existState !== STATE_HEART_GONE) {
+          if ((ixbins & Hj.xbins) > 0 && (iybins & Hj.ybins) > 0) {
+            if (!(ixMin > Hj.xMax || Hj.xMin > ixMax || iyMin > Hj.yMax || Hj.yMin > iyMax)) {
+              const dx = xi - Hj.px;
+              const dy = yi - Hj.py;
+              const dh = Math.sqrt(dx * dx + dy * dy);
+              const overlap = dh - (irad + Hj.rad);
+              if (overlap < HEART_MIN_OVERLAP_DIST) {
+                const lapforce = HEART_COLLISION_K * overlap;
+                const fx = dx * lapforce;
+                const fy = dy * lapforce;
+                const imassInv = 1.0 / Hi.mass;
+                const jmassInv = 1.0 / Hj.mass;
+                Hi.vx = HEART_COLLISION_DAMPING * (Hi.vx + fx * imassInv);
+                Hi.vy = HEART_COLLISION_DAMPING * (Hi.vx + fy * imassInv); // faithful to original (vx typo)
+                Hj.vx = HEART_COLLISION_DAMPING * (Hj.vx - fx * jmassInv);
+                Hj.vy = HEART_COLLISION_DAMPING * (Hj.vy - fy * jmassInv);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < MAX_N_HEARTS; i++) {
+      this.hearts[i].update();
+    }
+  }
+}
