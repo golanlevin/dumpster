@@ -150,16 +150,16 @@ class Heart {
   }
 
   accumulateAttractionForceToSelected(spx, spy, spr) {
-    if (this.existState !== STATE_HEART_GONE) {
-      const dx = spx - this.px;
-      const dy = spy - this.py;
-      const dh = Math.sqrt(dx * dx + dy * dy) - spr;
-      if (dh > 0) {
-        const f = 0.15 * (this.similarityToSelected - 0.33) / (dh + 1);
-        this.vx += f * dx;
-        this.vy += f * dy;
-      }
-    }
+    if (this.existState === STATE_HEART_GONE) return;
+    if (this.similarityToSelected < 0.33) return;
+    const dx = spx - this.px;
+    const dy = spy - this.py;
+    const dSq = dx * dx + dy * dy;
+    if (dSq <= spr * spr) return;
+    const dh = Math.sqrt(dSq) - spr;
+    const f = 0.15 * (this.similarityToSelected - 0.33) / (dh + 1);
+    this.vx += f * dx;
+    this.vy += f * dy;
   }
 
   accumulateCentralizingForce() {

@@ -377,23 +377,23 @@ class HeartManager {
   updateHearts() {
     this.hearts[0].setMouseInformation(this.bCurrentlyDraggingSelectedHeart, this.myMouseX, this.myMouseY);
 
+    // Pass A: all force accumulation in one traversal.
+    const hasSelected = this.mouseSelectedHeartID !== DUMPSTER_INVALID;
+    let spx, spy, spr;
+    if (hasSelected) {
+      const selH = this.hearts[this.mouseSelectedHeartID];
+      spx = selH.px; spy = selH.py; spr = selH.rad;
+    }
     for (let i = 0; i < MAX_N_HEARTS; i++) {
       this.hearts[i].accumulateGravityForce();
       this.hearts[i].accumulateCentralizingForce();
-    }
-
-    if (this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
-      const selH = this.hearts[this.mouseSelectedHeartID];
-      const spx = selH.px, spy = selH.py, spr = selH.rad;
-      for (let i = 0; i < MAX_N_HEARTS; i++) {
+      if (hasSelected) {
         if (i !== this.mouseSelectedHeartID) {
           this.hearts[i].accumulateAttractionForceToSelected(spx, spy, spr);
-        } else {
-          if (this.bMousePressed) {
-            this.hearts[this.mouseSelectedHeartID].px = this.myMouseX;
-            this.hearts[this.mouseSelectedHeartID].py = this.myMouseY;
-            this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_DRAG);
-          }
+        } else if (this.bMousePressed) {
+          this.hearts[this.mouseSelectedHeartID].px = this.myMouseX;
+          this.hearts[this.mouseSelectedHeartID].py = this.myMouseY;
+          this.hearts[this.mouseSelectedHeartID].setMouseState(STATE_MOUSE_DRAG);
         }
       }
     }
