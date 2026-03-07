@@ -67,7 +67,7 @@ const   BALLOON_SHOW_AUTHOR_NAME = true;
 const   N_BREAKUP_DATABASE_RECORDS = 20038;
 const   N_BREAKUP_DATABASE_RECORDS_20K = (222*90); 
 const   MAX_N_HEARTS       = 720;
-const   HM_SHUFFLE_SLOP         = 0.135;
+const   HM_SHUFFLE_SLOP    = 0.135;
 const   HM_SHUFFLE_PROBABILITY  = 0.08; // probability per frame of swapping a heart out
 
 const   HEART_MIN_RAD      = 4.5;

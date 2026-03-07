@@ -23,6 +23,10 @@ class HeartManager {
     for (let i = 0; i < MAX_N_HEARTS; i++) {
       this.hearts[i] = new Heart(i, BM);
     }
+
+    // Compact list of non-GONE heart indices for render and other O(N) passes.
+    this.activeHeartIds = [];
+    for (let i = 0; i < MAX_N_HEARTS; i++) this.activeHeartIds.push(i);
   }
 
   //====================================================================
@@ -102,7 +106,9 @@ class HeartManager {
       }
 
       if (indexOfAvailableHeart !== DUMPSTER_INVALID) {
+        const wasGone = this.hearts[indexOfAvailableHeart].existState === STATE_HEART_GONE;
         this.hearts[indexOfAvailableHeart].initiate(newBreakupIndex, 1.0);
+        if (wasGone) this.activeHeartIds.push(indexOfAvailableHeart);
         if (indexOfAvailableHeart !== this.mouseSelectedHeartID) {
           this.causeHeartToBecomeTheMainSelection(indexOfAvailableHeart);
           newHeartId = indexOfAvailableHeart;
@@ -210,6 +216,7 @@ class HeartManager {
     }
 
     this.hearts[indexOfAvailableHeart].initiate(newBreakupIndex, sim);
+    this.activeHeartIds.push(indexOfAvailableHeart);
   }
 
   //====================================================================
@@ -286,8 +293,8 @@ class HeartManager {
   renderHeartObjects() {
     ellipseMode(CENTER);
     noStroke();
-    for (let i = 0; i < MAX_N_HEARTS; i++) {
-      this.hearts[i].render();
+    for (let k = 0; k < this.activeHeartIds.length; k++) {
+      this.hearts[this.activeHeartIds[k]].render();
     }
     if (this.mouseOverHeartID !== DUMPSTER_INVALID && this.mouseOverHeartID !== this.mouseSelectedHeartID) {
       this.hearts[this.mouseOverHeartID].renderMouseOver();
@@ -435,7 +442,12 @@ class HeartManager {
     }
 
     for (let i = 0; i < MAX_N_HEARTS; i++) {
+      const wasGone = this.hearts[i].existState === STATE_HEART_GONE;
       this.hearts[i].update();
+      if (!wasGone && this.hearts[i].existState === STATE_HEART_GONE) {
+        const idx = this.activeHeartIds.indexOf(i);
+        if (idx !== -1) this.activeHeartIds.splice(idx, 1);
+      }
     }
   }
 }
