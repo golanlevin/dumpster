@@ -204,7 +204,7 @@ class DumpsterHistogram {
 
       if (breakupIndex !== DUMPSTER_INVALID) {
         const breakupDate = BM.bups[breakupIndex].date;
-        const kosDateFrac = Math.max(0, Math.min(1, breakupDate / (this.indexHi - 1)));
+        const kosDateFrac = Math.max(0, Math.min(1, (breakupDate - 0.5) / this.indexHi));
         this.mouseX = this.histogramL + kosDateFrac * (this.histogramR - this.histogramL);
         this.mouseY = this.histogramT + this.histogramH * Math.sqrt(0.1);
       }
@@ -371,8 +371,9 @@ class DumpsterHistogram {
     let monthCount = 0;
     while (index > this.monthStartDays[monthCount] && monthCount < 12) monthCount++;
     monthCount--;
-    return this.dayNames[index % 7] + ' ' + this.monthNames[monthCount % 12] +
-           ' ' + (index - this.monthStartDays[monthCount]);
+    const dayOfMonth = index - this.monthStartDays[monthCount];
+    if (dayOfMonth > this.monthLengths2005[monthCount + 1]) return '';
+    return this.dayNames[index % 7] + ' ' + this.monthNames[monthCount % 12] + ' ' + dayOfMonth;
   }
 
   //-------------------------------------------------------------

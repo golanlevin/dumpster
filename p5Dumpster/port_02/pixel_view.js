@@ -29,6 +29,11 @@ class PixelView {
     this.hiliteMoYf = DUMPSTER_INVALID;
     this.moAlph = 1.0;
 
+    this.magXc = DUMPSTER_INVALID; // center pixel col of the current mag view
+    this.magYc = DUMPSTER_INVALID; // center pixel row of the current mag view
+
+    this.bHasMagSelection = false; // true after a mag click, cleared when mouse enters pixel view
+
     this.L = PIXELVIEW_L;
     this.T = PIXELVIEW_T;
     this.R = PIXELVIEW_L + PIXELVIEW_W;
@@ -155,6 +160,8 @@ class PixelView {
       xc = pid % PIXELVIEW_W;
       yc = Math.floor(pid / PIXELVIEW_W);
     }
+    this.magXc = xc;
+    this.magYc = yc;
 
     const xMagStart = this.nmagScale - 1;
     const yMagStart = PIXELVIEW_H * PIXELVIEW_SCALE + this.nmagScale - 1;
@@ -183,7 +190,7 @@ class PixelView {
     }
 
     push();
-    translate(xMagStart, yMagStart - 1);
+    translate(xMagStart, yMagStart - 0);
     noFill();
     stroke(rectR * 0.7, rectG * 0.7, rectB * 0.7);
     rect(0, 0, 7 * this.nmagScale, 5 * this.nmagScale);
@@ -285,6 +292,13 @@ class PixelView {
         Math.floor(mxi / PIXELVIEW_SCALE) < this.R &&
         Math.floor(myi / PIXELVIEW_SCALE) >= this.T &&
         Math.floor(myi / PIXELVIEW_SCALE) < this.B) {
+      this.bHasMagSelection = false; // real mouse entry clears the mag-click lock
+    }
+
+    if (Math.floor(mxi / PIXELVIEW_SCALE) >= this.L &&
+        Math.floor(mxi / PIXELVIEW_SCALE) < this.R &&
+        Math.floor(myi / PIXELVIEW_SCALE) >= this.T &&
+        Math.floor(myi / PIXELVIEW_SCALE) < this.B) {
       this.bMouseInView = true;
       this.mousePixelIndex = (Math.floor(myi / PIXELVIEW_SCALE) - PIXELVIEW_T) * PIXELVIEW_W +
                              (Math.floor(mxi / PIXELVIEW_SCALE) - PIXELVIEW_L);
@@ -297,7 +311,7 @@ class PixelView {
         this.KOS.currentMouseoverBreakupIdWithOffset = this.PIN.PixelIndexToBupIndex[offsetPindex];
       }
     } else {
-      if (this.KOS.currentMouseoverBreakupId === DUMPSTER_INVALID) {
+      if (!this.bHasMagSelection && this.KOS.currentMouseoverBreakupId === DUMPSTER_INVALID) {
         this.pixelIndexOfMouseoverBupId = DUMPSTER_INVALID;
       }
     }
@@ -334,6 +348,61 @@ class PixelView {
         this.keyOffsetY = 0;
       }
     }
+  }
+
+  //=======================================================================
+  // Snap all highlight positions to the pixel corresponding to bupId,
+  // as if the user had clicked it directly in the pixel view.
+  activateBupId(bupId) {
+    if (bupId === DUMPSTER_INVALID || bupId < 0 || bupId >= N_BREAKUP_DATABASE_RECORDS) return;
+    const pindex = this.PIN.BupIndexToPixelIndex[bupId];
+    if (pindex === DUMPSTER_INVALID || pindex < 0 || pindex >= this.nPixels) return;
+
+    const xi = (pindex % PIXELVIEW_W) * PIXELVIEW_SCALE;
+    const yi = Math.floor(pindex / PIXELVIEW_W) * PIXELVIEW_SCALE;
+
+    this.hiliteXf   = xi;  this.hiliteYf   = yi;
+    this.hiliteMoXf = xi;  this.hiliteMoYf = yi;
+    this.pixelClickedBreakupId = bupId;
+    this.KOS.currentSelectedBreakupId    = bupId;
+    this.KOS.currentMouseoverBreakupId   = bupId;
+    this.pixelIndexOfSelectedBupId  = pindex;
+    this.pixelIndexOfMouseoverBupId = pindex;
+    this.currentSelectedBreakupId   = bupId;
+    this.currentMouseoverBreakupId  = bupId;
+    this.keyOffsetX = 0;
+    this.keyOffsetY = 0;
+    this.bHasMagSelection = true;
+  }
+
+  //=======================================================================
+  // Returns the bupId of the mag cell clicked, or DUMPSTER_INVALID.
+  checkMagClick(mx, my) {
+    if (this.magXc === DUMPSTER_INVALID || this.magYc === DUMPSTER_INVALID) return DUMPSTER_INVALID;
+
+    const xMagStart = this.nmagScale - 1;
+    const yMagStart = PIXELVIEW_H * PIXELVIEW_SCALE + this.nmagScale - 1;
+
+    if (mx < xMagStart || mx >= xMagStart + this.nmagX * this.nmagScale) return DUMPSTER_INVALID;
+    if (my < yMagStart || my >= yMagStart + this.nmagY * this.nmagScale) return DUMPSTER_INVALID;
+
+    const dx = Math.floor((mx - xMagStart) / this.nmagScale);
+    const dy = Math.floor((my - yMagStart) / this.nmagScale);
+
+    const targetX = this.magXc + dx - Math.floor(this.nmagX / 2);
+    const targetY = this.magYc + dy - Math.floor(this.nmagY / 2);
+
+    if (targetX < 0 || targetX >= PIXELVIEW_W) return DUMPSTER_INVALID;
+    if (targetY < 0 || targetY >= PIXELVIEW_H) return DUMPSTER_INVALID;
+
+    const pindex = targetY * PIXELVIEW_W + targetX;
+    if (pindex < 0 || pindex >= this.nPixels) return DUMPSTER_INVALID;
+
+    const bupId = this.PIN.PixelIndexToBupIndex[pindex];
+    if (bupId === DUMPSTER_INVALID || bupId < 0 || bupId >= N_BREAKUP_DATABASE_RECORDS) return DUMPSTER_INVALID;
+    if (!this.BM.bups[bupId].VALID) return DUMPSTER_INVALID;
+
+    return bupId;
   }
 
   //=======================================================================

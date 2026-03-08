@@ -78,6 +78,20 @@ class HelpDisplayer {
     const sexStr = bup.sex === 2 ? 'M' : bup.sex === 1 ? 'F' : 'N/A';
     const match  = Math.floor(100.0 * this.BM.SIMILARITIES[breakupIndex]);
 
-    return `ID: ${idStr}\nAGE: ${ageStr}\nSEX: ${sexStr}\nMATCH: ${match}\nLENGTH: ${bup.summaryLen}`;
+    const dayStr = this._dayIndexToDateStr(bup.date);
+    return `ID: ${idStr}\nAGE: ${ageStr}\nSEX: ${sexStr}\nMATCH: ${match}\nLENGTH: ${bup.summaryLen}\nDAY: ${dayStr}`;
+  }
+
+  //================================================================
+  _dayIndexToDateStr(d) {
+    if (d <= 0) return 'N/A';
+    const months  = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let remaining = d - 1; // bup.date is 1-based; convert to 0-based
+    for (let m = 0; m < 12; m++) {
+      if (remaining < lengths[m]) return `${months[m]} ${remaining + 1}`;
+      remaining -= lengths[m];
+    }
+    return 'N/A';
   }
 }

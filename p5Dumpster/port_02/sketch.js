@@ -18,6 +18,7 @@ var _summaryFile, _histLines;
 var _histbg, _dumpsterimg;
 
 var _lastInteractionTime = 0;
+var _balloonClickActive = false; // true while mouse is held on a balloon
 
 //------------------------------------------------------------
 function preload() {
@@ -78,7 +79,7 @@ function draw() {
   // HeartManager
   const bMouseInHeartArea = mouseX >= HEART_WALL_L && mouseX <= HEART_WALL_R &&
                              mouseY >= HEART_WALL_T && mouseY <= HEART_WALL_B;
-  HM.informOfMouse(mouseX, mouseY, mouseIsPressed && bMouseInHeartArea);
+  HM.informOfMouse(mouseX, mouseY, mouseIsPressed && bMouseInHeartArea && !_balloonClickActive);
   HM.mouseTestHearts();
   HM.updateHearts();
   HM.renderHeartObjects();
@@ -160,7 +161,7 @@ function getBreakupText(id) {
   const txt = Files[s[0] + '/' + s[1] + '/' + s[2] + '/' + s] || '';
   const nl = txt.indexOf('\n');
   const body = nl !== -1 ? txt.slice(nl + 1) : txt;
-  return body.replace(/ ' /g, "'");
+  return body.replace(/ ` /g, "'").replace(/ ' /g, "'");
 }
 
 function getBreakupAuthorDisplay(id) {
@@ -175,11 +176,72 @@ function getBreakupAuthorDisplay(id) {
 }
 
 //------------------------------------------------------------
+function _enactHistogramDayClick(dayIndex) {
+  if (dayIndex < 0 || dayIndex + 1 > 365) return;
+
+  // Collect all valid breakups whose date matches this day.
+  const candidates = [];
+  for (let i = 0; i < N_BREAKUP_DATABASE_RECORDS; i++) {
+    if (BM.bups[i].VALID && BM.bups[i].date === dayIndex + 1) candidates.push(i);
+  }
+  if (candidates.length === 0) return;
+
+  // Pick one to become the main selected breakup (same flow as a pixel click).
+  const selectedBupId = candidates[Math.floor(random(candidates.length))];
+  HM.decimateCurrentHeartPopulation();
+  const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(selectedBupId);
+  _enactSelection(heartId);
+
+  console.log(`Histogram click: dayIndex=${dayIndex}, ${candidates.length} candidates`);
+  console.log(`  Selected: bupId=${selectedBupId}, date=${BM.bups[selectedBupId].date}`);
+
+  // Immediately seed several more hearts from the same day.
+  const beforeIds = new Set(HM.activeHeartIds);
+  HM.initiateHeartsFromList(candidates, 8);
+  for (const hid of HM.activeHeartIds) {
+    if (!beforeIds.has(hid)) {
+      const bupId = HM.hearts[hid].breakupId;
+      console.log(`  Added heart ${hid}: bupId=${bupId}, date=${BM.bups[bupId].date}`);
+    }
+  }
+}
+
+//------------------------------------------------------------
 function mousePressed() {
   _lastInteractionTime = millis();
 
-  // Clicks in the histogram area should not propagate to the simulation.
-  if (mouseY >= HEART_WALL_B) return;
+  // Mag-view clicks (bottom-left loupe): treated like a pixel-view selection.
+  const magClickedBupId = PV.checkMagClick(mouseX, mouseY);
+  if (magClickedBupId !== DUMPSTER_INVALID) {
+    PV.activateBupId(magClickedBupId);
+    HM.decimateCurrentHeartPopulation();
+    const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(magClickedBupId);
+    _enactSelection(heartId);
+    return;
+  }
+
+  // Histogram-area clicks: handle day selection, then stop.
+  if (mouseY >= HEART_WALL_B) {
+    if (mouseY <= DUMPSTER_APP_H && mouseX >= DH.histogramL && mouseX <= DH.histogramR) {
+      _enactHistogramDayClick(DH.dataIndexOfCursor);
+    }
+    return;
+  }
+
+  // Balloon clicks are handled exclusively — they do not propagate to the
+  // heart or pixel-view systems.
+  const clickedBalloonIdx = PBM.getMouseContainingBalloon();
+  if (clickedBalloonIdx !== DUMPSTER_INVALID) {
+    _balloonClickActive = true;
+    if (clickedBalloonIdx !== PBM.currentBalloonIndex) {
+      const b = PBM.balloons[clickedBalloonIdx];
+      if (b.heartId !== DUMPSTER_INVALID) {
+        HM.causeHeartToBecomeTheMainSelection(b.heartId);
+        _enactSelection(b.heartId);
+      }
+    }
+    return;
+  }
 
   HM.mousePressed();
   PV.mousePressed();
@@ -199,6 +261,7 @@ function mousePressed() {
 }
 
 function mouseReleased() {
+  _balloonClickActive = false;
   HM.mouseReleased();
   _lastInteractionTime = millis();
 }
@@ -212,8 +275,10 @@ function keyPressed() {
   PV.sendArrowKey(keyCode);
 
   if (keyCode === ENTER && PV.bMouseInView) {
-    const bupId = PV.pixelClickedBreakupId;
-    if (bupId !== DUMPSTER_INVALID && BM.bups[bupId].VALID) {
+    const bupId = KOS.currentMouseoverBreakupIdWithOffset;
+    if (bupId !== DUMPSTER_INVALID &&
+        bupId !== KOS.currentSelectedBreakupId &&
+        BM.bups[bupId].VALID) {
       HM.decimateCurrentHeartPopulation();
       const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(bupId);
       _enactSelection(heartId);

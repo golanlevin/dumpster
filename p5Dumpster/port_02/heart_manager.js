@@ -220,6 +220,44 @@ class HeartManager {
   }
 
   //====================================================================
+  // Initiate up to `count` hearts from the provided breakup-ID array,
+  // skipping IDs already present in the simulation.
+  initiateHeartsFromList(bupIds, count) {
+    // Shuffle a copy so we pick randomly
+    const shuffled = bupIds.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = tmp;
+    }
+
+    let added = 0;
+    for (let k = 0; k < shuffled.length && added < count; k++) {
+      const bupId = shuffled[k];
+
+      // Skip if already present
+      let alreadyPresent = false;
+      for (let i = 0; i < MAX_N_HEARTS; i++) {
+        if (this.hearts[i].existState !== STATE_HEART_GONE && this.hearts[i].breakupId === bupId) {
+          alreadyPresent = true; break;
+        }
+      }
+      if (alreadyPresent) continue;
+
+      // Find an available (GONE) slot
+      let slot = DUMPSTER_INVALID;
+      for (let j = 0; j < MAX_N_HEARTS; j++) {
+        if (this.hearts[j].existState === STATE_HEART_GONE) { slot = j; break; }
+      }
+      if (slot === DUMPSTER_INVALID) break;
+
+      const sim = this.BM.SIMILARITIES[bupId];
+      this.hearts[slot].initiate(bupId, sim);
+      this.activeHeartIds.push(slot);
+      added++;
+    }
+  }
+
+  //====================================================================
   performScheduledShuffling() {
     const meanSim = this.computeMeanSimilarity();
     this.removeBadMatchingHeartRandomly(meanSim);
@@ -373,10 +411,7 @@ class HeartManager {
     if (this.mouseOverHeartID !== DUMPSTER_INVALID) {
       this.KOS.currentMouseoverBreakupId = this.hearts[this.mouseOverHeartID].breakupId;
     } else {
-      if (this.myMouseX >= HEART_WALL_L && this.myMouseX < HEART_WALL_R &&
-          this.myMouseY >= HEART_WALL_T && this.myMouseY < HEART_WALL_B) {
-        this.KOS.currentMouseoverBreakupId = DUMPSTER_INVALID;
-      }
+      this.KOS.currentMouseoverBreakupId = DUMPSTER_INVALID;
     }
   }
 

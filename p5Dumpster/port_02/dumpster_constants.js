@@ -60,6 +60,7 @@ const   BALLOON_OVER_ALPDELTA = 28;
 const   BALLOON_ALP_BLURA  = 0.85;
 const   BALLOON_ALP_BLURB  = (1.0 - BALLOON_ALP_BLURA);
 const   BALLOON_FADE_QUADS = false;
+const   BALLOON_TEXT_SIZE    = 11;
 const   BALLOON_LOADING_STRING = "Connecting ...";
 const   BALLOON_SHOW_AUTHOR_NAME = true;
 

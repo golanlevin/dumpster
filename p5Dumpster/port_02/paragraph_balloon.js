@@ -17,14 +17,15 @@ class ParagraphBalloon {
     this.ph = 64;
     this.targety = this.py;
 
-    this.margL = 12;
-    this.margR = 15;
-    this.margT = 17;
-    this.margB = 0;
+    this.margL = 13;
+    this.margR = 32; // 15 in original
+    this.margT = 19; // 17
+    this.margB = 2;
     this.paragraphWidth = this.pw - (this.margL + this.margR);
 
     this.authorDisplay = '';
     this.authorWidth   = 0;
+    this.dateString    = '';
 
     this.b_prepared   = false;
     this.b_drawShadow = true;
@@ -48,9 +49,10 @@ class ParagraphBalloon {
     this.paraFont = pF;
   }
 
-  setStringAndComputeLayout(aBreakupString, authorDisplay, bid, bOnlyLoading) {
+  setStringAndComputeLayout(aBreakupString, authorDisplay, bid, bOnlyLoading, dateString) {
     this.breakupId     = bid;
     this.authorDisplay = authorDisplay || '';
+    this.dateString    = dateString    || '';
 
     // Measure the bold author label width so the first line of body text can be indented.
     let authorWidth = 0;
@@ -58,7 +60,7 @@ class ParagraphBalloon {
       push();
       textFont(this.paraFont);
       textStyle(BOLD);
-      textSize(9);
+      textSize(BALLOON_TEXT_SIZE);
       authorWidth = textWidth(this.authorDisplay + ' ');
       pop();
     }
@@ -122,21 +124,22 @@ class ParagraphBalloon {
       this.balloonAlpha = BALLOON_ALP_BLURA * this.balloonAlpha + BALLOON_ALP_BLURB * this.balloonAlphaTarget;
       const alpi = Math.round(this.balloonAlpha);
 
+      // Shadow below balloon
+      const sy = this.py + dh;
+      if (sy < HEART_WALL_B && this.b_drawShadow) {
+        fill(this.shadColor);
+        rect(this.px + PB_SHADOW_OFFSET, sy, this.pw - PB_SHADOW_OFFSET, PB_SHADOW_OFFSET);
+      }
+
       // Draw balloon body (BALLOON_FADE_QUADS is always false)
       if (alpi >= 254) {
         fill(bcr, bcg, bcb);
       } else {
         fill(bcr, bcg, bcb, alpi);
       }
-      rect(this.px, this.py, this.pw, dh);
+      rect(this.px, this.py, this.pw, dh, 5);
 
-      // Shadow below balloon
-      const sy = this.py + dh;
-      if (sy < HEART_WALL_B && this.b_drawShadow) {
-        fill(this.shadColor);
-        rect(this.px, sy, PB_SHADOW_OFFSET, 1);
-        rect(this.px + PB_SHADOW_OFFSET, sy, this.pw - PB_SHADOW_OFFSET, PB_SHADOW_OFFSET);
-      }
+      
 
       // Text
       fill(tcr, tcg, tcb, text_alp);
@@ -149,14 +152,19 @@ class ParagraphBalloon {
       }
       this.myParagraph.render(this.px + this.margL, this.py + this.margT);
 
-      // Corner dots for rounded-rect appearance
-      const pyf = this.py - 0.5;
-      stroke(cornerCol);
-      point(this.px, pyf);
-      point(this.px + this.pw - 1, pyf);
-      point(this.px + this.pw - 1, pyf + dh - 1);
-      point(this.px, pyf + dh - 1);
-      noStroke();
+      // Date label — pixel font, rotated 90° clockwise, in right margin
+      if (this.dateString) {
+        push();
+        textFont(pixelFont, 6);
+        textStyle(NORMAL);
+        textAlign(LEFT);
+        fill(tcr, tcg, tcb, text_alp * 0.30);
+        noStroke();
+        translate(this.px + this.pw - 14, this.py + this.margL - 3);
+        rotate(HALF_PI);
+        text(this.dateString, 0, 0);
+        pop();
+      }
     }
   }
 }
