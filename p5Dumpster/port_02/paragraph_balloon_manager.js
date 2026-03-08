@@ -154,6 +154,34 @@ class ParagraphBalloonManager {
 
   //====================================================================
   //====================================================================
+  // Update the topmost balloon's text in-place (no new stack entry).
+  // Ensures a minimum height of 4 lines during pixel-view drag.
+  updateTopmostBalloonInPlace(breakupId, heartId) {
+    if (this.currentBalloonIndex === DUMPSTER_INVALID || this.nExtantBalloons === 0) return;
+    const b = this.balloons[this.currentBalloonIndex];
+    const text   = getBreakupText(breakupId);
+    const author = getBreakupAuthorDisplay(breakupId);
+    b.setStringAndComputeLayout(text, author, breakupId, false, '');
+    const minPh = Math.ceil(5 * b.myParagraph.myLeading + b.margT + b.margB);
+    b.ph = Math.max(b.ph, minPh);
+    b.dateString = this._dateStringForBupId(breakupId, b.myParagraph.nLines >= 3);
+    if (heartId !== undefined && heartId !== DUMPSTER_INVALID) b.heartId = heartId;
+  }
+
+  //====================================================================
+  // Re-layout the topmost balloon at its natural height after a drag ends.
+  restoreTopmostBalloonHeight() {
+    if (this.currentBalloonIndex === DUMPSTER_INVALID || this.nExtantBalloons === 0) return;
+    const b = this.balloons[this.currentBalloonIndex];
+    if (b.breakupId === DUMPSTER_INVALID) return;
+    const text   = getBreakupText(b.breakupId);
+    const author = getBreakupAuthorDisplay(b.breakupId);
+    b.setStringAndComputeLayout(text, author, b.breakupId, false, '');
+    b.dateString = this._dateStringForBupId(b.breakupId, b.myParagraph.nLines >= 3);
+    // bNewTextAppeared is true, so lower balloons will smoothly retarget upward.
+  }
+
+  //====================================================================
   _dateStringForBupId(bupId, bShowYear) {
     if (bupId < 0 || bupId >= N_BREAKUP_DATABASE_RECORDS) return '';
     const d = BM.bups[bupId].date;

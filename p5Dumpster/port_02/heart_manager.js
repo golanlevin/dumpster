@@ -243,16 +243,34 @@ class HeartManager {
       }
       if (alreadyPresent) continue;
 
-      // Find an available (GONE) slot
+      // Find an available (GONE) slot; if none, evict the least-similar non-selected,
+      // non-balloon existing heart (same strategy as addSelectedBreakupFromOutside).
       let slot = DUMPSTER_INVALID;
       for (let j = 0; j < MAX_N_HEARTS; j++) {
         if (this.hearts[j].existState === STATE_HEART_GONE) { slot = j; break; }
       }
+      if (slot === DUMPSTER_INVALID) {
+        const nExtantBalloons = PBM.nExtantBalloons;
+        let leastSim = 1.0;
+        for (let j = 0; j < MAX_N_HEARTS; j++) {
+          if (j === this.mouseSelectedHeartID) continue;
+          if (this.hearts[j].existState !== STATE_HEART_EXISTS) continue;
+          let attached = false;
+          for (let b = 0; b < nExtantBalloons; b++) {
+            if (j === PBM.balloons[b].heartId) { attached = true; break; }
+          }
+          if (!attached && this.BM.SIMILARITIES[this.hearts[j].breakupId] < leastSim) {
+            leastSim = this.BM.SIMILARITIES[this.hearts[j].breakupId];
+            slot = j;
+          }
+        }
+      }
       if (slot === DUMPSTER_INVALID) break;
 
+      const wasGone = this.hearts[slot].existState === STATE_HEART_GONE;
       const sim = this.BM.SIMILARITIES[bupId];
       this.hearts[slot].initiate(bupId, sim);
-      this.activeHeartIds.push(slot);
+      if (wasGone) this.activeHeartIds.push(slot);
       added++;
     }
   }
@@ -311,6 +329,13 @@ class HeartManager {
       this.bCurrentlyDraggingSelectedHeart = true;
       this.KOS.currentSelectedBreakupId = this.hearts[whichClicked].breakupId;
     }
+  }
+
+  // Update the selected heart's breakupId in-place without changing its visual state.
+  updateSelectedHeartBreakupId(newBupId) {
+    if (this.mouseSelectedHeartID === DUMPSTER_INVALID) return;
+    this.hearts[this.mouseSelectedHeartID].breakupId = newBupId;
+    this.KOS.currentSelectedBreakupId = newBupId;
   }
 
   refreshHeartColors(BM, clickedHeartBreakupID) {

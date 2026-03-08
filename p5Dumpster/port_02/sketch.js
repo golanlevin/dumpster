@@ -18,7 +18,12 @@ var _summaryFile, _histLines;
 var _histbg, _dumpsterimg;
 
 var _lastInteractionTime = 0;
-var _balloonClickActive = false; // true while mouse is held on a balloon
+var _balloonClickActive = false;      // true while mouse is held on a balloon
+var _bPixelViewMouseDownInView = false; // true from mouseDown in pixel view until mouseUp
+var _bPixelViewDragActive = false;    // true once mouse has moved >= 20px from click origin
+var _pixelViewClickOriginX = 0;
+var _pixelViewClickOriginY = 0;
+var _pixelViewClickBupId = DUMPSTER_INVALID;
 
 //------------------------------------------------------------
 function preload() {
@@ -83,7 +88,7 @@ function draw() {
   HM.mouseTestHearts();
   HM.updateHearts();
   HM.renderHeartObjects();
-  HM.performScheduledShuffling();
+  if (!_bPixelViewDragActive) HM.performScheduledShuffling();
 
   // ParagraphBalloonManager
   PBM.informOfMouse(mouseX, mouseY, mouseIsPressed);
@@ -98,13 +103,21 @@ function draw() {
 
   // PixelView
   PV.informOfMouse(mouseX, mouseY, mouseIsPressed);
+  if (_bPixelViewMouseDownInView && mouseIsPressed) {
+    if (!_bPixelViewDragActive) {
+      const dx = mouseX - _pixelViewClickOriginX;
+      const dy = mouseY - _pixelViewClickOriginY;
+      if (dx * dx + dy * dy >= 400) _bPixelViewDragActive = true; // 20px threshold
+    }
+    if (_bPixelViewDragActive) _enactPixelDrag();
+  }
   PV.render();
 
   // HelpDisplayer
   HD.update(mouseX, mouseY);
   HD.render();
 
-  _autoPlay();
+  if (!_bPixelViewDragActive && !HM.bCurrentlyDraggingSelectedHeart) _autoPlay();
 
   drawDraft(); 
 }
@@ -147,6 +160,23 @@ function _enactSelection(heartId) {
   if (bupId === DUMPSTER_INVALID) return;
 
   PBM.execute(bupId, heartId);
+  BM.informOfNewlySelectedBreakup(bupId);
+  HM.refreshHeartColors(BM, bupId);
+  PV.updateImage();
+}
+
+//------------------------------------------------------------
+function _enactPixelDrag() {
+  if (!PV.bMouseInView) return;
+  const bupId = PV.getMousePixelBupId();
+  if (bupId === DUMPSTER_INVALID || !BM.bups[bupId].VALID) return;
+  if (bupId === KOS.currentSelectedBreakupId) return;
+
+  PV.snapSelectionToBupId(bupId);
+  KOS.currentMouseoverBreakupId           = bupId;
+  KOS.currentMouseoverBreakupIdWithOffset = bupId;
+  HM.updateSelectedHeartBreakupId(bupId);
+  PBM.updateTopmostBalloonInPlace(bupId, HM.mouseSelectedHeartID);
   BM.informOfNewlySelectedBreakup(bupId);
   HM.refreshHeartColors(BM, bupId);
   PV.updateImage();
@@ -197,7 +227,7 @@ function _enactHistogramDayClick(dayIndex) {
 
   // Immediately seed several more hearts from the same day.
   const beforeIds = new Set(HM.activeHeartIds);
-  HM.initiateHeartsFromList(candidates, 8);
+  HM.initiateHeartsFromList(candidates, candidates.length);
   for (const hid of HM.activeHeartIds) {
     if (!beforeIds.has(hid)) {
       const bupId = HM.hearts[hid].breakupId;
@@ -244,17 +274,21 @@ function mousePressed() {
   }
 
   HM.mousePressed();
-  PV.mousePressed();
-
   const heartClicked = HM.mouseClickedHeartID;
-  const pixelClicked = PV.pixelClickedBreakupId;
-
-  if (heartClicked !== DUMPSTER_INVALID && pixelClicked === DUMPSTER_INVALID) {
+  if (heartClicked !== DUMPSTER_INVALID) {
     _enactSelection(heartClicked);
-  } else if (heartClicked === DUMPSTER_INVALID && pixelClicked !== DUMPSTER_INVALID) {
-    if (BM.bups[pixelClicked].VALID) {
+  } else if (PV.bMouseInView) {
+    _pixelViewClickBupId = PV.getMousePixelBupId();
+    _pixelViewClickOriginX = mouseX;
+    _pixelViewClickOriginY = mouseY;
+    _bPixelViewMouseDownInView = true;
+    _bPixelViewDragActive = false;
+
+    // Immediate click: snap yellow cursor and add to balloon stack + particle system.
+    if (_pixelViewClickBupId !== DUMPSTER_INVALID && BM.bups[_pixelViewClickBupId].VALID) {
+      PV.snapSelectionToBupId(_pixelViewClickBupId);
       HM.decimateCurrentHeartPopulation();
-      const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(pixelClicked);
+      const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(_pixelViewClickBupId);
       _enactSelection(heartId);
     }
   }
@@ -262,6 +296,9 @@ function mousePressed() {
 
 function mouseReleased() {
   _balloonClickActive = false;
+  _bPixelViewMouseDownInView = false;
+  if (_bPixelViewDragActive) PBM.restoreTopmostBalloonHeight();
+  _bPixelViewDragActive = false;
   HM.mouseReleased();
   _lastInteractionTime = millis();
 }

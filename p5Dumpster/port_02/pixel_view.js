@@ -351,6 +351,30 @@ class PixelView {
   }
 
   //=======================================================================
+  // Returns the bupId at the current mouse pixel, or DUMPSTER_INVALID.
+  getMousePixelBupId() {
+    if (this.mousePixelIndex === DUMPSTER_INVALID ||
+        this.mousePixelIndex < 0 ||
+        this.mousePixelIndex >= this.nPixels) return DUMPSTER_INVALID;
+    return this.PIN.PixelIndexToBupIndex[this.mousePixelIndex];
+  }
+
+  //=======================================================================
+  // Snap the yellow cursor immediately to bupId (no animation), used during drag.
+  snapSelectionToBupId(bupId) {
+    if (bupId === DUMPSTER_INVALID || bupId < 0 || bupId >= N_BREAKUP_DATABASE_RECORDS) return;
+    const pindex = this.PIN.BupIndexToPixelIndex[bupId];
+    if (pindex === DUMPSTER_INVALID || pindex < 0 || pindex >= this.nPixels) return;
+    const xi = (pindex % PIXELVIEW_W) * PIXELVIEW_SCALE;
+    const yi = Math.floor(pindex / PIXELVIEW_W) * PIXELVIEW_SCALE;
+    this.hiliteXf = xi;
+    this.hiliteYf = yi;
+    this.pixelIndexOfSelectedBupId = pindex;
+    this.currentSelectedBreakupId  = bupId;
+    this.KOS.currentSelectedBreakupId = bupId;
+  }
+
+  //=======================================================================
   // Snap all highlight positions to the pixel corresponding to bupId,
   // as if the user had clicked it directly in the pixel view.
   activateBupId(bupId) {

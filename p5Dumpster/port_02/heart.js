@@ -82,13 +82,8 @@ class Heart {
     this.my_wall_B = HEART_WALL_B - this.rad;
 
     if (sim === 1.0) {
-      if (mouseIsPressed) {
-        this.px = HEART_WALL_L;
-        this.py = min(HEART_WALL_B, max(HEART_WALL_T, this.myMouseY));
-      } else {
-        this.px = random(HEART_WALL_L, (HEART_WALL_L + HEART_WALL_R) / 2.0);
-        this.py = HEART_WALL_T;
-      }
+      this.px = width / 2;
+      this.py = height / 2;
     } else {
       if (random(1) < 0.5) {
         const rxf = 0.50 * Math.pow(random(1), 1.50);
