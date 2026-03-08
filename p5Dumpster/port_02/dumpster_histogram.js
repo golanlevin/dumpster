@@ -323,7 +323,7 @@ class DumpsterHistogram {
           const dataSpan = (fracb - fraca) * nDataToShowf;
           const stripePixelWidth = dataSpan > 0 ? 1.0 / dataSpan : 1.0;
           let t = Math.max(0, Math.min(1, stripePixelWidth / DH_STRIPE_ANTIALIAS_PX));
-          t = t*t*t;
+          t = t*t*t*t;
           // stroke(t >= 1.0 ? bandColor : lerpColor(color(0, 255, 0), bandColor, t)); // debug
           stroke(t >= 1.0 ? bandColor : lerpColor(bandAvg, bandColor, t));
         } else {

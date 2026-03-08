@@ -74,8 +74,9 @@ class ParagraphBalloonManager {
 
       const text   = getBreakupText(breakupId);
       const author = getBreakupAuthorDisplay(breakupId);
-      const dstr   = this._dateStringForBupId(breakupId);
-      this.balloons[this.currentBalloonIndex].setStringAndComputeLayout(text, author, breakupId, false, dstr);
+      this.balloons[this.currentBalloonIndex].setStringAndComputeLayout(text, author, breakupId, false, '');
+      const nLines = this.balloons[this.currentBalloonIndex].myParagraph.nLines;
+      this.balloons[this.currentBalloonIndex].dateString = this._dateStringForBupId(breakupId, nLines >= 3);
       this.balloons[this.currentBalloonIndex].setPositionY(BALLOON_START_Y);
       this.balloons[this.currentBalloonIndex].heartId = heartId;
       this.bNewRequestMade = true;
@@ -153,17 +154,16 @@ class ParagraphBalloonManager {
 
   //====================================================================
   //====================================================================
-  _dateStringForBupId(bupId) {
+  _dateStringForBupId(bupId, bShowYear) {
     if (bupId < 0 || bupId >= N_BREAKUP_DATABASE_RECORDS) return '';
     const d = BM.bups[bupId].date;
     if (d <= 0) return '';
-    const months  = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
     const lengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let remaining = d - 1;
     for (let m = 0; m < 12; m++) {
       if (remaining < lengths[m]) {
-        // return months[m] + ' ' + (remaining + 1);
-        return (m+1) + '-' + (remaining + 1);
+        const str = (m + 1) + '-' + (remaining + 1);
+        return bShowYear ? str + '-05' : str;
       }
       remaining -= lengths[m];
     }
