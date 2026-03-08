@@ -107,7 +107,7 @@ function draw() {
     if (!_bPixelViewDragActive) {
       const dx = mouseX - _pixelViewClickOriginX;
       const dy = mouseY - _pixelViewClickOriginY;
-      if (dx * dx + dy * dy >= 400) _bPixelViewDragActive = true; // 20px threshold
+      if (dx * dx + dy * dy >= PIXELVIEW_DRAG_THRESHOLD_PX * PIXELVIEW_DRAG_THRESHOLD_PX) _bPixelViewDragActive = true;
     }
     if (_bPixelViewDragActive) _enactPixelDrag();
   }
@@ -222,8 +222,8 @@ function _enactHistogramDayClick(dayIndex) {
   const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(selectedBupId);
   _enactSelection(heartId);
 
-  console.log(`Histogram click: dayIndex=${dayIndex}, ${candidates.length} candidates`);
-  console.log(`  Selected: bupId=${selectedBupId}, date=${BM.bups[selectedBupId].date}`);
+  // console.log(`Histogram click: dayIndex=${dayIndex}, ${candidates.length} candidates`);
+  // console.log(`  Selected: bupId=${selectedBupId}, date=${BM.bups[selectedBupId].date}`);
 
   // Immediately seed several more hearts from the same day.
   const beforeIds = new Set(HM.activeHeartIds);
@@ -231,7 +231,7 @@ function _enactHistogramDayClick(dayIndex) {
   for (const hid of HM.activeHeartIds) {
     if (!beforeIds.has(hid)) {
       const bupId = HM.hearts[hid].breakupId;
-      console.log(`  Added heart ${hid}: bupId=${bupId}, date=${BM.bups[bupId].date}`);
+      // console.log(`  Added heart ${hid}: bupId=${bupId}, date=${BM.bups[bupId].date}`);
     }
   }
 }
