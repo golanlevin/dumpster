@@ -284,6 +284,7 @@ class DumpsterHistogram {
     const band0 = this.CS.bandFillColor0;
     const band1 = this.CS.bandFillColor1;
     const bandP = this.CS.bandCapColor;
+    const bandAvg = lerpColor(band0, band1, 0.5);
     const bandCurCol = color(this.curdat_r, this.curdat_g, this.curdat_b);
 
     for (let i = this.histogramL; i < this.histogramR; i++) {
@@ -317,7 +318,17 @@ class DumpsterHistogram {
         stroke(bandCurCol);
       } else {
         const evenDay = (indexa % 2) === 0;
-        stroke(evenDay ? band0 : band1);
+        const bandColor = evenDay ? band0 : band1;
+        if (this.bMouseInside) {
+          const dataSpan = (fracb - fraca) * nDataToShowf;
+          const stripePixelWidth = dataSpan > 0 ? 1.0 / dataSpan : 1.0;
+          let t = Math.max(0, Math.min(1, stripePixelWidth / DH_STRIPE_ANTIALIAS_PX));
+          t = t*t*t;
+          // stroke(t >= 1.0 ? bandColor : lerpColor(color(0, 255, 0), bandColor, t)); // debug
+          stroke(t >= 1.0 ? bandColor : lerpColor(bandAvg, bandColor, t));
+        } else {
+          stroke(bandColor);
+        }
       }
       line(fixi, this.histogramB, fixi, Y);
 
