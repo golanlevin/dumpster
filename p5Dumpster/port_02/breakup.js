@@ -67,7 +67,7 @@ class Breakup {
 
   //=============================================================
   setAccessTags(good, gen, flt, instig, themes) {
-    this.VALID      = (good > 0);
+    this.VALID      = SHOW_NONGOOD_BREAKUPS || (good > 0);
     this.sex        = gen;
     this.fault      = flt;
     this.instigator = instig;
