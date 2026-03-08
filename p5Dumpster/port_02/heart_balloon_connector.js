@@ -11,6 +11,89 @@ class HeartBalloonConnector {
 
   //=========================================================================
   renderConnections() {
+    const dc = drawingContext;
+    const mouseSelectedHeartID = this.HM.mouseSelectedHeartID;
+    const mouseoverBalloonId   = this.PBM.getMouseContainingBalloon();
+    const mouseOverHeartID     = this.HM.mouseOverHeartID;
+    const nBalloons = this.PBM.nExtantBalloons;
+
+    dc.save();
+    dc.lineCap = 'round';
+    dc.lineWidth = 1;
+
+    for (let b = 0; b < nBalloons; b++) {
+      const breakupId = this.PBM.balloons[b].breakupId;
+      const heartId   = this.PBM.balloons[b].heartId;
+      if (breakupId === DUMPSTER_INVALID || heartId === DUMPSTER_INVALID) continue;
+
+      const hpt = this.HM.getHeartLoc(heartId);
+      const hx = hpt.px, hy = hpt.py;
+      if (hx === DUMPSTER_INVALID || hy === DUMPSTER_INVALID) continue;
+
+      const Hi = this.HM.hearts[heartId];
+      const Hd = Hi.diam * 0.5 + 6;
+
+      const balloonPy = this.PBM.balloons[b].py;
+      const balloonPh = this.PBM.balloons[b].ph;
+      const bx = BALLOON_X;
+      const by = balloonPy + balloonPh / 2.0;
+
+      const ax = bx - CONNECTOR_BEZ_DIF;
+      const ay = by;
+      const jx = (hx + (bx - CONNECTOR_BEZ_DIF)) / 2.0;
+      const jy = (hy + by) / 2.0;
+
+      const dx = jx - hx, dy = jy - hy;
+      const dh = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const ix = hx + Hd * dx / dh;
+      const iy = hy + Hd * dy / dh;
+
+      let Hr = (Hi.colr + BALLOON_BODY_R) / 2.0;
+      let Hg = (Hi.colg + BALLOON_BODY_G) / 2.0;
+      let Hb = (Hi.colb + BALLOON_BODY_B) / 2.0;
+
+      let bover = false;
+      if (b === mouseoverBalloonId) {
+        Hr = Hi.colr; Hg = Hi.colg; Hb = 255;
+        Hi.colr = Hi.colrt = 0;
+        Hi.colg = Hi.colgt = 0;
+        Hi.colb = Hi.colbt = 255;
+        bover = true;
+      }
+      if (heartId === mouseOverHeartID || Hi.mouseState === STATE_MOUSE_OVER ||
+          (this.HM.bCurrentlyDraggingSelectedHeart && heartId === mouseSelectedHeartID)) {
+        this.PBM.balloons[b].b_correspondingHeartIsMousedOver = true;
+        bover = true;
+      } else {
+        this.PBM.balloons[b].b_correspondingHeartIsMousedOver = false;
+      }
+      if (heartId === mouseSelectedHeartID) { Hr = 255; Hg = 255; Hb = 0; }
+
+      const grad = dc.createLinearGradient(ix, iy, bx, by);
+      grad.addColorStop(0, `rgb(${Math.round(Hr)},${Math.round(Hg)},${Math.round(Hb)})`);
+      grad.addColorStop(1, `rgb(${BALLOON_BODY_R},${BALLOON_BODY_G},${BALLOON_BODY_B})`);
+      dc.strokeStyle = grad;
+      dc.setLineDash(bover ? [1, 2.5] : [1, 5.0]);
+
+      // Bezier: heart-circumference point → midpoint CP → balloon-left CP → balloon edge
+      dc.beginPath();
+      dc.moveTo(ix, iy);
+      dc.bezierCurveTo(jx, jy, ax, ay, bx, by);
+      dc.stroke();
+
+      // Circle ring at the heart
+      dc.setLineDash([]);
+      dc.beginPath();
+      dc.arc(hx, hy, Hd, 0, Math.PI * 2);
+      dc.stroke();
+    }
+
+    dc.restore();
+    strokeWeight(1); // re-sync p5.js internal state
+  }
+
+  //=========================================================================
+  renderConnectionsOld() {
     strokeWeight(1.0);
 
     const mouseSelectedHeartID = this.HM.mouseSelectedHeartID;

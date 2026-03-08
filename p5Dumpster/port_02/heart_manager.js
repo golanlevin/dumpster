@@ -354,6 +354,32 @@ class HeartManager {
 
   //====================================================================
   renderHeartObjects() {
+    const dc = drawingContext;
+    const TWO_PI = Math.PI * 2;
+
+    dc.save();
+    for (let k = 0; k < this.activeHeartIds.length; k++) {
+      const h = this.hearts[this.activeHeartIds[k]];
+      if (h.existState === STATE_HEART_GONE) continue;
+      dc.fillStyle = `rgb(${h.colr|0},${h.colg|0},${h.colb|0})`;
+      dc.beginPath();
+      dc.arc(h.px, h.py, h.diam * 0.5, 0, TWO_PI);
+      dc.fill();
+    }
+    dc.restore();
+
+    // Special rendering for mouseover and selected — only ever 1-2 hearts, p5.js is fine
+    ellipseMode(CENTER);
+    if (this.mouseOverHeartID !== DUMPSTER_INVALID && this.mouseOverHeartID !== this.mouseSelectedHeartID) {
+      this.hearts[this.mouseOverHeartID].renderMouseOver();
+    }
+    if (this.mouseSelectedHeartID !== DUMPSTER_INVALID) {
+      this.hearts[this.mouseSelectedHeartID].renderMouseSelected();
+    }
+  }
+
+  //====================================================================
+  renderHeartObjectsOld() {
     ellipseMode(CENTER);
     noStroke();
     for (let k = 0; k < this.activeHeartIds.length; k++) {
