@@ -279,6 +279,138 @@ class DumpsterHistogram {
     const nDataToShow  = this.indexHi - this.indexLo;
     const nDataToShowf = nDataToShow;
     const nXinv        = 1.0 / this.histogramW;
+    const hB           = this.histogramB;
+    const bMouseInside = this.bMouseInside;
+
+    const band0 = this.CS.bandFillColor0;
+    const band1 = this.CS.bandFillColor1;
+    const bandP = this.CS.bandCapColor;
+
+    // Precompute color components — avoids p5.js wrapper calls inside hot loop
+    const r0 = red(band0)|0,   g0 = green(band0)|0,   b0 = blue(band0)|0;
+    const r1 = red(band1)|0,   g1 = green(band1)|0,   b1 = blue(band1)|0;
+    const rP = red(bandP)|0,   gP = green(bandP)|0,   bP = blue(bandP)|0;
+    const ra = (r0 + r1) >> 1, ga = (g0 + g1) >> 1,  ba = (b0 + b1) >> 1;
+    const rC = this.curdat_r,  gC = this.curdat_g,    bC = this.curdat_b;
+
+    const s0 = `rgb(${r0},${g0},${b0})`;
+    const s1 = `rgb(${r1},${g1},${b1})`;
+    const sP = `rgb(${rP},${gP},${bP})`;
+
+    const dc = drawingContext;
+    dc.save();
+    dc.lineWidth = 1;
+
+    // Batch paths for the two alternating bar colors
+    const path0      = new Path2D();
+    const path1      = new Path2D();
+    const capPath    = new Path2D();
+    const cursorPath = new Path2D(); // all screen columns belonging to dataIndexOfCursor
+
+    // Blended (AA) lines collected for individual draw: [fixi, Y, r, g, b, ...]
+    const blended = [];
+
+    let cursorY = this.histogramB; // top of cursor bar (for tmpPixelBounds)
+
+    for (let i = this.histogramL; i < this.histogramR; i++) {
+      const fixi  = i + 0.5;
+      let fraca = (i     - this.histogramL) * nXinv;
+      let fracb = (i + 1 - this.histogramL) * nXinv;
+
+      fraca = this._warpFraction(fraca, this.mousePower);
+      fracb = this._warpFraction(fracb, this.mousePower);
+
+      let indexa = this.indexLo + Math.floor(fraca * nDataToShowf);
+      let indexb = this.indexLo + Math.floor(fracb * nDataToShowf);
+      indexa = Math.min(this.nDatam1, Math.max(0, indexa));
+      indexb = Math.min(this.nDatam1, Math.max(0, indexb));
+      const indexRange = indexb - indexa;
+
+      let localValueMax = 0;
+      if (indexRange > 1) {
+        for (let j = indexa; j <= indexb; j++) {
+          if (this.data[j].N > localValueMax) localValueMax = this.data[j].N;
+        }
+      } else {
+        localValueMax = this.data[indexa].N;
+      }
+      const Y = hB - localValueMax * this.histogramValueScaleFactor;
+
+      if (indexa === this.dataIndexOfCursor) {
+        this.dataValueOfCursor = localValueMax;
+        this.tmpPixelBounds[2] = Math.floor(hB - this.dataValueOfCursor * this.histogramValueScaleFactor);
+        this.tmpPixelBounds[3] = hB;
+        cursorY = Y;
+        cursorPath.moveTo(fixi, hB);
+        cursorPath.lineTo(fixi, Y);
+      } else {
+        const even = (indexa & 1) === 0;
+        if (bMouseInside) {
+          const dataSpan = (fracb - fraca) * nDataToShowf;
+          const stripePixelWidth = dataSpan > 0 ? 1.0 / dataSpan : 1.0;
+          let t = Math.max(0, Math.min(1, stripePixelWidth / DH_STRIPE_ANTIALIAS_PX));
+          t = t*t*t*t;
+          // stroke(t >= 1.0 ? bandColor : lerpColor(color(0, 255, 0), bandColor, t)); // debug
+          if (t >= 1.0) {
+            if (even) { path0.moveTo(fixi, hB); path0.lineTo(fixi, Y); }
+            else       { path1.moveTo(fixi, hB); path1.lineTo(fixi, Y); }
+          } else {
+            const bandR = even ? r0 : r1;
+            const bandG = even ? g0 : g1;
+            const bandBl = even ? b0 : b1;
+            blended.push(fixi, Y,
+              (ra + (bandR  - ra) * t + 0.5) | 0,
+              (ga + (bandG  - ga) * t + 0.5) | 0,
+              (ba + (bandBl - ba) * t + 0.5) | 0);
+          }
+        } else {
+          if (even) { path0.moveTo(fixi, hB); path0.lineTo(fixi, Y); }
+          else       { path1.moveTo(fixi, hB); path1.lineTo(fixi, Y); }
+        }
+      }
+
+      // Cap dot: 1×1 filled rect centered at (fixi, Y-1)
+      capPath.rect(fixi - 0.5, Y - 1.5, 1, 1);
+    }
+
+    // Two batched bar strokes
+    dc.strokeStyle = s0;
+    dc.stroke(path0);
+    dc.strokeStyle = s1;
+    dc.stroke(path1);
+
+    // Individual blended (AA) bars — only occurs when bMouseInside && t < 1
+    for (let k = 0; k < blended.length; k += 5) {
+      dc.strokeStyle = `rgb(${blended[k+2]},${blended[k+3]},${blended[k+4]})`;
+      dc.beginPath();
+      dc.moveTo(blended[k], hB);
+      dc.lineTo(blended[k], blended[k+1]);
+      dc.stroke();
+    }
+
+    // Batched cap dots
+    dc.fillStyle = sP;
+    dc.fill(capPath);
+
+    // Cursor bar — all screen columns that map to dataIndexOfCursor, in cursor color.
+    // Drawn via direct canvas (still inside save/restore) then re-stroked via p5.js
+    // after restore so that p5.js's stroke cache stays in sync.
+    const bandCurCol = color(rC, gC, bC);
+    dc.strokeStyle = `rgb(${rC|0},${gC|0},${bC|0})`;
+    dc.stroke(cursorPath);
+
+    dc.restore();
+    strokeWeight(1); // re-sync p5.js lineWidth
+    // Re-apply cursor color through p5.js to keep its stroke cache current,
+    // so _drawCurrentDataBounds() stroke(bandCurCol) is never skipped incorrectly.
+    stroke(bandCurCol);
+  }
+
+  //-------------------------------------------------------------
+  _drawHistogramDataOld() {
+    const nDataToShow  = this.indexHi - this.indexLo;
+    const nDataToShowf = nDataToShow;
+    const nXinv        = 1.0 / this.histogramW;
     const histTshad    = Math.floor(this.histogramT + 0.5 * this.histogramH);
 
     const band0 = this.CS.bandFillColor0;

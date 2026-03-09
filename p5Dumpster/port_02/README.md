@@ -406,4 +406,4 @@ The decoded `Files` dict maps keys like `"0/1/2/01234"` (directory path derived 
 * Put credit byline in lower left in pixel font
 * Pulsate big yellow circle; animate with noise to stir pot
 * Installation version uses precomputed sentence-level transformer embeddings + cosine distance; online version uses UMAP bigrams.
-* Use Canvas drawingContext to render Histogram, for speed-up. 
+* Used dashed lines in the circles around the balloon'ed heart particles.

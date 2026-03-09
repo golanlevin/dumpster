@@ -124,7 +124,7 @@ function drawDraft(){
   textStyle(BOLD);
   textSize(288); 
   noStroke();
-  fill(255,255,255, 60); 
+  fill(255,255,255, 40); 
   textAlign(CENTER);
   push(); 
   translate(width/2, height * 0.6); 
