@@ -68,10 +68,6 @@ function setup() {
     while (!BM.bups[randomId].VALID);
     const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(randomId);
     _enactSelection(heartId);
-
-    // Temporary: fixed breakup for debugging histogram flag issue.
-    // const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(10158);
-    // _enactSelection(heartId);
   });
 }
 

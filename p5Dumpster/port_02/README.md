@@ -405,4 +405,5 @@ The decoded `Files` dict maps keys like `"0/1/2/01234"` (directory path derived 
 * Have mouseDrag outside canvas still affect interior? 
 * Put credit byline in lower left in pixel font
 * Pulsate big yellow circle; animate with noise to stir pot
-* Installation version uses precomputed sentence-level transformer embeddings + cosine distance; online version uses UMAP bigrams. 
+* Installation version uses precomputed sentence-level transformer embeddings + cosine distance; online version uses UMAP bigrams.
+* Use Canvas drawingContext to render Histogram, for speed-up. 
