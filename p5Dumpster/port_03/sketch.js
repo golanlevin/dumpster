@@ -1,4 +1,4 @@
-// TheDumpster — p5.js port (port_02)
+// TheDumpster — p5.js port, 16:9 (port_03)
 
 var KOS; // KnowerOfSelections
 var BM;  // BreakupManager
