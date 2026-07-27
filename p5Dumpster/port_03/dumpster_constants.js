@@ -31,12 +31,21 @@ const   HISTOGRAM_H        = DUMPSTER_APP_H - PIXELVIEW_H*PIXELVIEW_SCALE;
 const   PIXELVIEW_B        = PIXELVIEW_T + PIXELVIEW_H*PIXELVIEW_SCALE;
 
 //----------------------------------
-// Bottom-left strip: mag loupe + help text, tucked under the pixel view and
-// left of the histogram. This strip is the tightest vertical constraint in the
-// app, so its offsets live here rather than inline.
-const   MAGVIEW_L          = PIXELVIEW_L + 16;
-const   MAGVIEW_T          = PIXELVIEW_B + 7;
-const   HELP_TEXT_L        = 18*9 - 2;
+// Bottom-left strip: mag loupe + help text on black, tucked under the pixel
+// view and left of the histogram. This strip is the tightest vertical
+// constraint in the app, so its offsets live here rather than inline.
+const   MAGVIEW_NX         = 7;
+const   MAGVIEW_NY         = 5;
+const   MAGVIEW_SCALE      = 18;
+const   MAGVIEW_W          = MAGVIEW_NX * MAGVIEW_SCALE;
+const   MAGVIEW_H          = MAGVIEW_NY * MAGVIEW_SCALE;
+// 12.5 app px == 25 device px at pixelDensity(2), so cell edges land on exact
+// device pixels. The +1 nudges the cell grid inward far enough for the loupe's
+// outer border ring (drawn at -1) to sit exactly on the margin.
+const   MAGVIEW_MARGIN     = 12.5;
+const   MAGVIEW_L          = MAGVIEW_MARGIN + 1;
+const   MAGVIEW_T          = PIXELVIEW_B + MAGVIEW_MARGIN + 1;
+const   HELP_TEXT_L        = MAGVIEW_L + MAGVIEW_W + 1 + MAGVIEW_MARGIN;
 const   HELP_TEXT_T        = MAGVIEW_T + 8;
 
 //----------------------------------

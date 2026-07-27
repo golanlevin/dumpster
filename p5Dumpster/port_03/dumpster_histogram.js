@@ -574,9 +574,8 @@ class DumpsterHistogram {
     }
     noStroke();
     fill(0);
-    rect(this.xoffset, this.yoffset, this.histogramL, this.histogramH);
-    fill(64);
-    rect(this.xoffset, this.histogramB, this.histogramL, 10);
+    rect(this.xoffset, this.yoffset, this.histogramL,
+         this.histogramH + this.nBands * this.bandH);
     fill(128);
     textFont(this.font6, 6);
     text('2005', this.bands[0].L - 19, this.bands[0].B - 2);

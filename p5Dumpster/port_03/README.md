@@ -14,9 +14,9 @@ The canvas is **1280×720** (16:9) pixels (`DUMPSTER_APP_W × DUMPSTER_APP_H`). 
 | **Heart Wall** | Right of pixel view, full height minus histogram | Physics-based particle system of heart-shaped dots |
 | **Histogram** | Bottom strip | Bar chart of breakups per day of year (2005) |
 
-A **magnification loupe** (7×5 cells at 18px each) sits below the pixel view, showing a zoomed neighborhood of the currently hovered/selected pixel.
+A **magnification loupe** (7×5 cells at 18px each) sits below the pixel view on a black ground, showing a zoomed neighborhood of the currently hovered/selected pixel. Its margins are `MAGVIEW_MARGIN` = 12.5 app px (= 25 device px at `pixelDensity(2)`, so cell edges land on whole device pixels).
 
-A **HelpDisplayer** text panel sits below the magnification loupe, showing metadata for the current selection (ID, AGE, SEX, MATCH %, LENGTH, DAY).
+A **HelpDisplayer** text panel sits to the right of the magnification loupe (also `MAGVIEW_MARGIN` away), showing metadata for the current selection (ID, AGE, SEX, MATCH %, LENGTH, DAY).
 
 **Balloon stack** appears in the right portion of the heart wall — a scrolling list of text excerpts from breakup stories, each connected to its heart particle by a bezier curve.
 
@@ -41,7 +41,7 @@ port_02/
   paragraph.js               — Word-wrap layout engine (character-width LUT)
   dumpster_histogram.js      — Histogram with mouse-zoom warp; month boundary bands
   histogram_color_scheme.js  — Color constants for histogram rendering
-  help_displayer.js          — Metadata text panel below magnification loupe
+  help_displayer.js          — Metadata text panel right of magnification loupe
   loader.js                  — Decodes compressed breakup text corpus from PNG image
   vocab.js                   — Vocabulary table for the compressed text corpus
   catalog.js                 — FILENAMES array mapping pixel-order indices to file keys
@@ -374,6 +374,8 @@ The decoded `Files` dict maps keys like `"0/1/2/01234"` (directory path derived 
 | `MAX_N_BALLOONS` | 14 | Ring buffer size |
 | `PIXELVIEW_W/H` | 100, 200 | Pixel grid dimensions |
 | `PIXELVIEW_SCALE` | 3 | Display scale factor |
+| `MAGVIEW_NX/NY/SCALE` | 7, 5, 18 | Mag loupe grid and cell size |
+| `MAGVIEW_MARGIN` | 12.5 | Loupe margins, app px (25 device px at 2×) |
 | `PIXELVIEW_DRAG_THRESHOLD_PX` | 16 | Min drag distance before pixel-drag activates |
 | `DH_STRIPE_ANTIALIAS_PX` | 3.0 | Histogram stripe AA threshold (pixels) |
 | `MAX_N_HEARTS` | 720 | Heart particle pool size |

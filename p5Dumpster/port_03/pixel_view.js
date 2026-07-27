@@ -50,9 +50,9 @@ class PixelView {
     this._pixData = new Uint8Array(this.nPixels * 4);
 
     // Magnification loupe parameters
-    this.nmagX = 7;
-    this.nmagY = 5;
-    this.nmagScale = 18;
+    this.nmagX = MAGVIEW_NX;
+    this.nmagY = MAGVIEW_NY;
+    this.nmagScale = MAGVIEW_SCALE;
 
     this._constructLUTs();
     this.PIN = new PixelIndexer(BM);
@@ -193,8 +193,8 @@ class PixelView {
     translate(xMagStart, yMagStart - 0);
     noFill();
     stroke(rectR * 0.7, rectG * 0.7, rectB * 0.7);
-    rect(0, 0, 7 * this.nmagScale, 5 * this.nmagScale);
-    rect(-1, -1, 7 * this.nmagScale + 2, 5 * this.nmagScale + 2);
+    rect(0, 0, MAGVIEW_W, MAGVIEW_H);
+    rect(-1, -1, MAGVIEW_W + 2, MAGVIEW_H + 2);
     stroke(rectR, rectG, rectB);
     line(this.nmagScale * 3.5, 0, this.nmagScale * 3.5, this.nmagScale * 2);
     rect(this.nmagScale * 3,   this.nmagScale * 2, this.nmagScale,     this.nmagScale);
