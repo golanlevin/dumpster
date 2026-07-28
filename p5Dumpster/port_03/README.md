@@ -29,6 +29,7 @@ port_02/
   sketch.js                  — Main p5.js sketch: setup/draw/events, global state
   dumpster_constants.js      — All global numeric/boolean constants
   breakup.js                 — Breakup data class (per-record metadata + similarity math)
+  similarity_providers.js    — The three content-similarity regimes (keys 1/2/3)
   breakup_manager.js         — Loads all data files; computes per-breakup similarity scores
   knower_of_selections.js    — Tiny shared state: which breakupId is selected/moused-over
   heart.js                   — Physics heart particle class
@@ -61,6 +62,10 @@ port_02/
 | `breakupSummaryLengths.dat` | Binary, 1 byte/record | Summary text length 0–255 |
 | `breakupsPerDay2005.txt` | One int/line | Count of breakups per calendar day |
 | `all_dumpster_texts.png` | Custom compressed PNG | All breakup story texts (decoded by `loader.js`) |
+| `bigram_w2v_128_int8.bin` | DMPE int8 | Regime 2 embeddings; regenerate with `textanalysis/make_embedding_asset.py` |
+| `sbert_384_int8.bin` | DMPE int8 | Regime 3 embeddings (bge-small, mean-centered) |
+| `nomic_256_int8.bin` | DMPE int8 | Regime 4 embeddings (nomic-embed, matryoshka 256D) |
+| `embeddings.json` | JSON | Manifest of which embedding assets are present |
 | `6px2bus.ttf` | TrueType | Pixel font used for dates and histogram labels |
 | `dumpster_980x609.jpg` | JPEG | Background image for the heart wall |
 | `hist_980x111.jpg` | JPEG | Background image for the histogram |
@@ -134,18 +139,124 @@ Each `Breakup` instance holds:
 
 Called on every new selection via `informOfNewlySelectedBreakup(bupId)` → `computeSimilarityOfAllBupsToCurrBup()`.
 
-Produces `BM.SIMILARITIES[i]` ∈ [0, 1] for all 20,038 records. Weights:
+Produces `BM.SIMILARITIES[i]` in [0, 1] for all 20,038 records, from six channels.
 
-- Language distance (7D Euclidean, contrast-enhanced to ±2σ): 0.20
-- Language tag commonalities: 0.30 (if nonzero)
-- Kamal tag commonalities: 0.40 (if nonzero)
-- Access tag commonalities: 0.40
-- Age distance (capped at 5 years): 0.10
-- Summary length distance: 0.05
+**Channels are standardized before weighting.** Each is z-scored over the valid records, so the
+`SIM_SHARE_*` constants in `dumpster_constants.js` are *variance shares* — a channel set to 0.55
+really does account for ~55% of the variation the viewer sees, rather than being an arbitrary
+multiplier:
 
-Weights can sum > 1 when both tag types are nonzero — the final vector is normalized by its max value.
+| Channel | Share | Source |
+|---|---|---|
+| Content (active regime) | `SIM_SHARE_CONTENT` 0.55 | `distancesByLang` |
+| Access tags (sex/fault/instigator/themes) | `SIM_SHARE_ACCESS_TAGS` 0.25 | `similaritiesByAccess` |
+| Age (capped at `AGE_DISTANCE_CAP` = 5 yrs) | `SIM_SHARE_AGE` 0.10 | `distancesByAge` |
+| Kamal tags | `SIM_SHARE_KAMAL_TAGS` 0.10 | `similaritiesByKamal` |
+| Language tags | `SIM_SHARE_LANG_TAGS` 0.00 | `similaritiesByTag` |
+| Summary length | `SIM_SHARE_LENGTH` 0.00 | `distancesByLen` |
 
-Heart color = `sim^0.9 * 200` for the red channel (dark red → bright red = low → high similarity).
+Shares are **ceilings, not guarantees**: a channel with no spread for a given selection carries no
+information, is skipped, and its share is redistributed over the live channels. Over 120
+selections, `kamalTags` is dead 61.7% of the time, `age` 45.0%, `langTags` 38.3%,
+`accessTags` 6.7%, content never — so content's realized share runs nearer 67%.
+
+The blended z-score is mapped to [0, 1] at mean ± `SIM_CONTRAST_LO/HI_SIGMA` (2.5 / 3.0) rather
+than by dividing by the maximum. Max-division squashed the field, because the selected record is
+identical to itself and sits 2.3–7.9 sd above the corpus. The selection is then pinned to exactly
+1.0 so a self-match reads `MATCH: 100`.
+
+Heart color = `sim^0.9 * 200` for the red channel (dark red -> bright red = low -> high similarity).
+
+### What changed from 2005, and why
+
+- **Language tags retired** (share 0). Drop-one analysis: removing them took the top-20's mean
+  content distance from 0.111 to 0.035, the single largest coherence gain of any channel.
+- **Summary length retired** (share 0). It contributed 0.3% of variance — a near-constant offset.
+- **Kamal tags kept** at 0.10. Counter to expectation, removing them made the top-20 *less*
+  textually coherent (0.111 -> 0.121), so they are mildly helping.
+- **Unknown age is now neutral.** `AGE_UNKNOWN_SCORE` = 0.5. The 2005 code left the term at 0.0,
+  i.e. treated missing data as *maximally dissimilar*, penalising the 36.7% of records with no age.
+- **Tag gating removed.** Terms were added only when nonzero, so a record's maximum possible score
+  varied from 0.75 to 1.45 depending on which tag types it happened to share, and max-normalization
+  then put tag-sharers structurally at the top.
+- **Per-channel max-normalization removed**, superseded by standardization; mean/sd is far less
+  hostage to one extreme record than division by a single maximum.
+
+Every metadata channel is close to orthogonal to meaning (correlation with the content channel:
+accessTags 0.115, langTags 0.042, kamalTags 0.034, age 0.011), so metadata contributes
+non-textual resonance rather than reinforcing semantic similarity. That is a deliberate choice,
+not a defect — but it is why the content share is set high.
+
+### Content-similarity regimes (`similarity_providers.js`)
+
+The single *content* channel is pluggable. Press **1**–**4** to switch live; the active
+regime and the cost of one full pass are shown in the bottom-left corner.
+
+| Key | Regime | Basis | Asset | Status |
+|---|---|---|---|---|
+| 1 | `HEURISTIC-7D` | 2005 hand-crafted 7D language features, Euclidean | *(none — built in)* | shipped |
+| 2 | `W2V-128` | 128D corpus-trained word2vec bigram means, cosine | `data/bigram_w2v_128_int8.bin` (2.45 MB) | shipped |
+| 3 | `SBERT-384` | `BAAI/bge-small-en-v1.5` sentence embeddings, mean-centered, cosine | `data/sbert_384_int8.bin` (7.34 MB) | shipped |
+| 4 | `NOMIC-256` | `nomic-embed-text-v1.5` matryoshka-truncated to 256D, mean-centered, cosine | `data/nomic_256_int8.bin` (4.89 MB) | shipped |
+
+`?regime=N` pins a regime at launch and `?sel=N` pins the initial breakup, so two regimes can be
+compared on the same selection: `index.html?regime=2&sel=9000`.
+
+The content channel's share is `SIM_SHARE_CONTENT` (0.55) — see the section above for how shares
+work. The table below is historical, from when the content channel was a raw 0.20 multiplier
+against unstandardized metadata; it shows how much the top-20 tightened as content weight rose,
+which is why the share was ultimately set high:
+
+| Old raw weight | Mean content distance of top 20 | Overlap with the 2005 heuristic set |
+|---|---|---|
+| 0.20 (heuristic content) | 0.317 | 100% |
+| 0.20 (w2v content) | 0.156 | 47% |
+| 0.40 | 0.104 | 37% |
+| 0.80 | 0.056 | 26% |
+| 1.60 | 0.032 | 17% |
+
+All four run through the same `regimeNormalizeAndContrast()` tail (normalize by max, then clamp
+outside mean ± 2σ), so switching compares geometry rather than tone-mapping.
+
+Regimes 3 and 4 are **mean-centered** at generation time. Sentence-transformer vectors are
+anisotropic — raw bge-small gave random-pair cosine of mean 0.729 / sd 0.063, with the 20th-nearest
+neighbour only 1.76 sd above the mean. After centering: mean 0.001 / sd 0.113, 20th neighbour
+3.38 sd out. Nomic behaves the same way: 2.20 sd raw, 3.34 sd centered. Word2vec, which needs no
+centering, sits at 2.32. Centering changes 55% of top-20 neighbour sets. Regenerate with
+`--center`; the app needs no special handling since it just takes cosines.
+
+Regimes 2 and 3 read a binary **DMPE** asset, fetched optionally at startup — a missing file is the
+normal state until the offline generator has been run, and 404s are silent. An unready regime is
+still selectable; `activeProvider()` falls back to regime 1 and the label shows `(NO DATA)`.
+
+DMPE layout (little-endian): `'DMPE'` magic (4B), `version=1` (1B), `dtype=0/int8` (1B),
+`dims` (u16), `count` (u32), reserved (u32), then `count × dims` int8 row-major, **indexed by
+`bupId`**. Rows are L2-normalized before quantization; exact cosine of the quantized vectors is
+recovered at load via per-row inverse norms, so no dequant scale is stored.
+
+### Cost (measured, plain Node module, 20,038 records)
+
+Full `computeSimilarityOfAllBupsToCurrBup()`, which `_enactPixelDrag()` runs **every frame**:
+
+| Regime | Pass | % of a 16 ms frame |
+|---|---|---|
+| 1 `HEURISTIC-7D` | 0.89 ms | 6% |
+| 2 `W2V-128` | 3.74 ms | 23% |
+| 3 `SBERT-384` | 14.63 ms | 91% |
+| 4 `NOMIC-256` | 8.17 ms | 51% |
+
+The shared metadata channels use `popcount32()` (see `breakup.js`) rather than walking 32 bit
+positions each: **2.78 ms -> 0.40 ms**, a 6.9x speedup, verified to produce exactly identical
+output over 399,960 record pairs. Regime 3 is the only one close to the limit; regime 4 gives
+comparable quality in half the time.
+
+> **Benchmarking caveat.** Do not measure this code through `vm.runInContext()`. Global function
+> calls are far slower there, so anything calling `popcount32()` in a hot loop reads 5-9x too
+> slow — a `vm` harness reported regime 1 at 7.98 ms against its real 0.89 ms, and made popcount
+> look like a *regression*. Concatenate the scripts into a plain module instead; `<script>`
+> globals behave like module scope, not like `vm` globals. Separately, `performance.now()` is
+> compressed under Chrome's `--virtual-time-budget`, so the on-screen ms readout only means
+> something in a real browser.
 
 ---
 
@@ -176,6 +287,7 @@ Per pixel: similarity → `rLUT[c]`, `gLUT[c]`, `bLUT[c]` (power-curve LUTs). Ma
 - **Drag** (after `PIXELVIEW_DRAG_THRESHOLD_PX = 16` px): calls `_enactPixelDrag()` every frame — updates selection in-place without adding to balloon stack.
 - **Arrow keys** (while mouse in pixel view): shift a ±1 key offset; ENTER confirms.
 - **Magnification loupe click**: treated as a pixel-view selection.
+- **Keys 1/2/3**: switch the content-similarity regime (see above).
 
 ---
 
@@ -376,6 +488,10 @@ The decoded `Files` dict maps keys like `"0/1/2/01234"` (directory path derived 
 | `PIXELVIEW_SCALE` | 3 | Display scale factor |
 | `MAGVIEW_NX/NY/SCALE` | 7, 5, 18 | Mag loupe grid and cell size |
 | `MAGVIEW_MARGIN` | 12.5 | Loupe margins, app px (25 device px at 2×) |
+| `SIM_SHARE_*` | .55/.25/.10/.10/0/0 | Variance shares of the six similarity channels |
+| `AGE_UNKNOWN_SCORE` | 0.5 | Age-channel score when age is unknown (2005 used 0.0) |
+| `SIM_CONTRAST_LO/HI_SIGMA` | 2.5, 3.0 | Final mapping of the blend into [0,1] |
+| `EMBEDDING_MANIFEST_PATH` | `data/embeddings.json` | Which embedding assets this build ships |
 | `PIXELVIEW_DRAG_THRESHOLD_PX` | 16 | Min drag distance before pixel-drag activates |
 | `DH_STRIPE_ANTIALIAS_PX` | 3.0 | Histogram stripe AA threshold (pixels) |
 | `MAX_N_HEARTS` | 720 | Heart particle pool size |
@@ -398,11 +514,14 @@ The decoded `Files` dict maps keys like `"0/1/2/01234"` (directory path derived 
 
 ## Todo
 
-* Import word2vec bigram UMAP dimensions to compute differences better. 
+* ~~Make the similarity metric swappable~~ — done (Phase 0, `similarity_providers.js`).
+* ~~Generate `bigram_w2v_128_int8.bin`~~ — done (Phase 1); press 2.
+* ~~Generate `sbert_384_int8.bin` with a local sentence-transformer~~ — done (Phase 2); press 3.
+* ~~Add `nomic_256_int8.bin` as regime 4~~ — done; press 4.
+* ~~Rewrite the tag channels with popcount~~ — done; 2.78 ms -> 0.40 ms, all four regimes.
 * Modify physics to better reflect clusters and similarity, perhaps via flocking.
 * Incorporate 'favorites' from [here](https://artport.whitney.org/commissions/the-dumpster/selected.html), perhaps preloaded, perhaps with a star button. 
 * Slow down autoplay, make more rhythmic
-* Modify aspect ratio for final screen
 * Have blue square respond to mouseovers in magnification loupe
 * Have mouseDrag outside canvas still affect interior? 
 * Put credit byline in lower left in pixel font

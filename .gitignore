@@ -27,3 +27,53 @@ textanalysis/.DS_Store
 .DS_Store
 textanalysis/.DS_Store
 .DS_Store
+
+# ---- Python (textanalysis pipeline) ----
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.python-version
+
+# Model weights fetched at build time (regenerable, large)
+textanalysis/models/
+
+# ---- Large regenerable intermediates from the embedding pipeline ----
+# These are float text dumps (tens of MB) produced by make_sbert_embeddings.py.
+# They are NOT needed to run the app — the app loads the small quantized .bin
+# assets in p5Dumpster/*/data/, which ARE tracked. Regenerate with:
+#   python textanalysis/make_sbert_embeddings.py ...
+textanalysis/output/vect_sbert*.txt
+textanalysis/output/vect_nomic*.txt
+textanalysis/output/embed_2d_*.txt
+.DS_Store
+.DS_Store
+textanalysis/.DS_Store
+textanalysis/.DS_Store

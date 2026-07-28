@@ -1,0 +1,23 @@
+{
+  "_comment": "Embedding assets present in this build. Only regimes listed under 'assets' are fetched at startup; anything absent stays unavailable and falls back to regime 1. Keys are regime numbers (2 = word2vec bigrams, 3 = sentence transformer). Written by textanalysis/make_embedding_asset.py; 'dims' and 'count' here are informational only, the authoritative values come from the DMPE header.",
+  "assets": {
+    "2": {
+      "file": "bigram_w2v_128_int8.bin",
+      "dims": 128,
+      "count": 20038,
+      "label": "W2V-128"
+    },
+    "3": {
+      "file": "sbert_384_int8.bin",
+      "dims": 384,
+      "count": 20038,
+      "label": "SBERT-384"
+    },
+    "4": {
+      "file": "nomic_256_int8.bin",
+      "dims": 256,
+      "count": 20038,
+      "label": "NOMIC-256"
+    }
+  }
+}

@@ -3,27 +3,76 @@
 
 class PixelIndexer {
 
-  constructor(BM) {
+  // layoutBytes: optional Uint8Array / byte array holding a DMPL asset (see
+  // make_pixel_layout.py). When present and parseable it replaces the four
+  // sorts; otherwise the original 2005 sort chain runs, unchanged.
+  constructor(BM, layoutBytes, label) {
+    this.label = label || 'layout';
     const nPixels = PIXELVIEW_W * PIXELVIEW_H;
     this.PixelIndexToBupIndex = new Int32Array(nPixels);
     this.BupIndexToPixelIndex = new Int32Array(N_BREAKUP_DATABASE_RECORDS).fill(DUMPSTER_INVALID);
+    this.layoutMode = 'classic-4-sort';
 
-    // Build working array of all breakups
-    this._V = [];
-    for (let i = 0; i < N_BREAKUP_DATABASE_RECORDS; i++) {
-      this._V.push(BM.bups[i]);
+    if (layoutBytes && this._loadPrecomputedLayout(layoutBytes, nPixels)) {
+      this.layoutMode = 'precomputed-umap-lap';
+    } else {
+      // Build working array of all breakups
+      this._V = [];
+      for (let i = 0; i < N_BREAKUP_DATABASE_RECORDS; i++) {
+        this._V.push(BM.bups[i]);
+      }
+
+      this._sort1_EntireSetByAge();
+      this._sort2_AgeByLanguage();
+      this._sort3_RowsOf50BySex();
+      this._sort4_ByInstigator();
+
+      for (let i = 0; i < nPixels; i++) {
+        this.PixelIndexToBupIndex[i] = this._V[i].ID;
+      }
     }
-
-    this._sort1_EntireSetByAge();
-    this._sort2_AgeByLanguage();
-    this._sort3_RowsOf50BySex();
-    this._sort4_ByInstigator();
 
     for (let i = 0; i < nPixels; i++) {
-      const bupId = this._V[i].ID;
-      this.PixelIndexToBupIndex[i] = bupId;
-      this.BupIndexToPixelIndex[bupId] = i;
+      const bupId = this.PixelIndexToBupIndex[i];
+      if (bupId >= 0 && bupId < N_BREAKUP_DATABASE_RECORDS) {
+        this.BupIndexToPixelIndex[bupId] = i;
+      }
     }
+    console.log(`PixelIndexer[${this.label}]: ${this.layoutMode}`);
+  }
+
+  //==================================================================
+  // DMPL: 'DMPL' magic, version u8, reserved u8, gridW u16, gridH u16,
+  // reserved u16, then gridW*gridH uint16 bupIds in row-major pixel order.
+  // Read byte-by-byte rather than through a typed-array view, because p5's
+  // loadBytes() hands back a plain array with no usable ArrayBuffer.
+  _loadPrecomputedLayout(bytes, nPixels) {
+    const fail = (why) => {
+      console.warn(`PixelIndexer[${this.label}]: ignoring layout asset — ${why}. ` +
+                   `Falling back to the classic four-pass sort.`);
+      return false;
+    };
+    if (!bytes || bytes.length < 12) return fail('too small');
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x4D ||
+        bytes[2] !== 0x50 || bytes[3] !== 0x4C) return fail('bad magic (expected DMPL)');
+    if (bytes[4] !== 1) return fail('unsupported version ' + bytes[4]);
+
+    const gw = bytes[6] | (bytes[7] << 8);
+    const gh = bytes[8] | (bytes[9] << 8);
+    if (gw !== PIXELVIEW_W || gh !== PIXELVIEW_H) {
+      return fail(`grid is ${gw}x${gh}, expected ${PIXELVIEW_W}x${PIXELVIEW_H}`);
+    }
+    if (bytes.length < 12 + nPixels * 2) {
+      return fail(`truncated: ${bytes.length} bytes, need ${12 + nPixels * 2}`);
+    }
+
+    for (let i = 0; i < nPixels; i++) {
+      const o = 12 + i * 2;
+      const id = bytes[o] | (bytes[o + 1] << 8);
+      if (id >= N_BREAKUP_DATABASE_RECORDS) return fail(`bupId ${id} out of range at pixel ${i}`);
+      this.PixelIndexToBupIndex[i] = id;
+    }
+    return true;
   }
 
   //==================================================================

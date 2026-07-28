@@ -1,0 +1,21 @@
+# Build-time only.
+#
+# The Dumpster app itself loads a static binary asset (data/sbert_384_int8.bin)
+# and never connects to anything at runtime. These packages exist solely to
+# generate that asset offline, via:
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+#   python make_sbert_embeddings.py          # -> output/vect_sbert.txt
+#   python make_embedding_asset.py --input output/vect_sbert.txt \
+#       --regime 3 --output sbert_384_int8.bin --label SBERT-384
+#
+# make_embedding_asset.py has NO dependencies and runs on system python.
+# Only make_sbert_embeddings.py needs this venv.
+#
+# Model: BAAI/bge-small-en-v1.5 (384D), cached in textanalysis/models/.
+# Version pinned for reproducibility; see requirements-lock.txt for the full
+# resolved tree as installed 2026-07-27 on Python 3.14.5.
+
+sentence-transformers==5.6.1

@@ -5,7 +5,7 @@
 
 class PixelView {
 
-  constructor(BM, KOS) {
+  constructor(BM, KOS, layoutBytesList) {
     this.BM  = BM;
     this.KOS = KOS;
 
@@ -55,8 +55,42 @@ class PixelView {
     this.nmagScale = MAGVIEW_SCALE;
 
     this._constructLUTs();
-    this.PIN = new PixelIndexer(BM);
+
+    // One PixelIndexer per entry in PIXELVIEW_LAYOUTS, built lazily and cached
+    // so switching is instant after the first visit. ~160 KB each.
+    this._layoutBytesList = layoutBytesList || [];
+    this._pinCache  = [];
+    this.layoutIndex = DUMPSTER_INVALID;
+    this.setLayoutIndex(PIXELVIEW_LAYOUT_DEFAULT);
+  }
+
+  //=======================================================================
+  // Switch the spatial layout (keys 7/8/9). Every pixel position changes, so
+  // the cursors have to be re-derived rather than animated.
+  setLayoutIndex(i) {
+    if (i < 0 || i >= PIXELVIEW_LAYOUTS.length || i === this.layoutIndex) return false;
+
+    if (!this._pinCache[i]) {
+      this._pinCache[i] = new PixelIndexer(
+        this.BM, this._layoutBytesList[i] || null, PIXELVIEW_LAYOUTS[i].label);
+    }
+    this.PIN = this._pinCache[i];
+    this.layoutIndex = i;
+
+    // Force the highlight bookkeeping to re-resolve against the new mapping.
+    this.currentSelectedBreakupId   = DUMPSTER_INVALID;
+    this.currentMouseoverBreakupId  = DUMPSTER_INVALID;
+    this.pixelIndexOfMouseoverBupId = DUMPSTER_INVALID;
+    const sel = this.KOS.currentSelectedBreakupId;
+    if (sel !== DUMPSTER_INVALID) this.snapSelectionToBupId(sel);
+
     this.recalculate();
+    return true;
+  }
+
+  layoutLabel() {
+    const L = PIXELVIEW_LAYOUTS[this.layoutIndex];
+    return L ? L.label : '?';
   }
 
   //=======================================================================
@@ -65,9 +99,15 @@ class PixelView {
     this.gLUT = new Uint8Array(256);
     this.bLUT = new Uint8Array(256);
 
-    const r0 = 0,   r1 = 255, rpow = 1.20;
-    const g0 = 16,  g1 = 190, gpow = 2.50;
-    const b0 = 16,  b1 = 255 - MALE_BLUE_AMOUNT, bpow = 2.60;
+    // The per-channel exponents are multiplied by PIXELVIEW_LUMINANCE_GAMMA, which
+    // is identical to raising similarity to that power before indexing
+    // (pow(pow(x,g),p) === pow(x,g*p)) but costs nothing per pixel. Note this is
+    // why a higher gamma also shifts the hue toward red: green and blue already
+    // have steeper exponents, so scaling them all magnifies the difference.
+    const G = PIXELVIEW_LUMINANCE_GAMMA;
+    const r0 = 0,   r1 = 255, rpow = 1.20 * G;
+    const g0 = 16,  g1 = 190, gpow = 2.50 * G;
+    const b0 = 16,  b1 = 255 - MALE_BLUE_AMOUNT, bpow = 2.60 * G;
 
     for (let i = 0; i < 256; i++) {
       const frac = i / 255.0;
@@ -104,6 +144,7 @@ class PixelView {
 
       for (let i = 0; i < this.nPixels; i++) {
         const bupIndex = pixToBup[i];
+        // Luminance nonlinearity lives in the LUTs — see _constructLUTs().
         const c = Math.floor(255.0 * SIMILARITIES[bupIndex]);
         const m = MALES[bupIndex];
         const idx = i * 4;
@@ -123,6 +164,7 @@ class PixelView {
   render() {
     this._updateSelectionInfo();
     this._updateMouseoverInfo();
+
 
     // Draw scaled pixel image
     image(this.img, PIXELVIEW_L, PIXELVIEW_T, PIXELVIEW_W * PIXELVIEW_SCALE, PIXELVIEW_H * PIXELVIEW_SCALE);

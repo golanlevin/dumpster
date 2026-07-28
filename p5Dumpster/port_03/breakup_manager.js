@@ -13,8 +13,24 @@ class BreakupManager {
     }
 
     this.currentlySelectedBreakupId = DUMPSTER_INVALID;
-    this.meanLangDistance = 0;
-    this.stdvLangDistance = 0;
+
+    // Content-similarity regimes, switchable at runtime (keys 1-4).
+    // Regimes 2-4 stay unready until their embedding asset loads; until then
+    // activeProvider() transparently falls back to regime 1.
+    this.providers = {};
+    this.providers[REGIME_HEURISTIC] = new HeuristicContentProvider(this.bups);
+    this.providers[REGIME_W2V]       = new EmbeddingContentProvider(
+      REGIME_W2V,   'W2V-128',   'data/bigram_w2v_128_int8.bin');
+    this.providers[REGIME_SBERT]     = new EmbeddingContentProvider(
+      REGIME_SBERT, 'SBERT-384', 'data/sbert_384_int8.bin');
+    this.providers[REGIME_NOMIC]     = new EmbeddingContentProvider(
+      REGIME_NOMIC, 'NOMIC-256', 'data/nomic_256_int8.bin');
+    this.requestedRegime = REGIME_DEFAULT;
+
+    // Instrumentation: cost of one full similarity pass. This runs every frame
+    // during pixel-view drag, so it lives inside the 16 ms frame budget.
+    this.lastComputeMs = 0;
+    this.avgComputeMs  = 0;
 
     // Per-breakup computed arrays
     this.SIMILARITIES       = new Float64Array(N_BREAKUP_DATABASE_RECORDS);
@@ -29,6 +45,22 @@ class BreakupManager {
     // Reusable temp buffers
     this._tempLangPacket  = new Array(N_BREAKUP_LANGUAGE_DESCRIPTORS).fill(0);
     this._tempLangTagInts = new Array(N_BREAKUP_LANGUAGE_BITFLAGS).fill(0);
+
+    // Blend channels, in a fixed order. Weights are sqrt(share), normalized so
+    // that sum(w^2) === 1 — that is what makes a share of 0.55 come out as ~55%
+    // of the variance of the blended score.
+    this._chShares = [SIM_SHARE_CONTENT, SIM_SHARE_LENGTH, SIM_SHARE_AGE,
+                      SIM_SHARE_LANG_TAGS, SIM_SHARE_KAMAL_TAGS, SIM_SHARE_ACCESS_TAGS];
+    this._chNames  = ['content', 'length', 'age', 'langTags', 'kamalTags', 'accessTags'];
+    const shareSum = this._chShares.reduce((a, b) => a + b, 0) || 1;
+    this._chWeights = this._chShares.map(s => Math.sqrt(s / shareSum));
+
+    this._nCh      = this._chShares.length;
+    this._chVal    = new Float64Array(this._nCh);  // scratch: one record's channels
+    this._chMean   = new Float64Array(this._nCh);
+    this._chInvSd  = new Float64Array(this._nCh);
+    this._chSum    = new Float64Array(this._nCh);
+    this._chSumSq  = new Float64Array(this._nCh);
   }
 
   //=====================================================================================
@@ -138,8 +170,44 @@ class BreakupManager {
   }
 
   //=====================================================================================
+  // The regime actually used for the content channel: the requested one if its
+  // asset is loaded, otherwise regime 1.
+  activeProvider() {
+    const p = this.providers[this.requestedRegime];
+    return (p && p.ready) ? p : this.providers[REGIME_HEURISTIC];
+  }
+
+  // Returns true if the requested regime is the one actually in use.
+  setRegime(regime) {
+    if (!this.providers[regime]) return false;
+    this.requestedRegime = regime;
+    const active = this.activeProvider();
+    if (active.id !== regime) {
+      console.warn(`Regime ${regime} (${this.providers[regime].name}) has no data yet — ` +
+                   `still using regime ${active.id} (${active.name}).`);
+    }
+    this.computeSimilarityOfAllBupsToCurrBup();
+    return active.id === regime;
+  }
+
+  // Short status string for the on-screen indicator.
+  regimeLabel() {
+    const want   = this.providers[this.requestedRegime];
+    const active = this.activeProvider();
+    const suffix = (active.id === want.id) ? '' : ' (NO DATA)';
+    return `${this.requestedRegime} ${want.name}${suffix}  ${this.avgComputeMs.toFixed(1)}ms`;
+  }
+
+  // Hand a downloaded DMPE asset to a regime. Returns true if it became ready.
+  loadEmbeddingAsset(regime, arrayBuffer) {
+    const p = this.providers[regime];
+    if (!p || !p.loadFromArrayBuffer) return false;
+    return p.loadFromArrayBuffer(arrayBuffer);
+  }
+
+  //=====================================================================================
   informOfNewlySelectedBreakup(bupId) {
-    if (bupId > 0 && bupId <= N_BREAKUP_DATABASE_RECORDS) {
+    if (bupId >= 0 && bupId < N_BREAKUP_DATABASE_RECORDS) {
       this.currentlySelectedBreakupId = bupId;
     } else {
       this.currentlySelectedBreakupId = DUMPSTER_INVALID;
@@ -149,14 +217,18 @@ class BreakupManager {
 
   //=====================================================================================
   computeSimilarityOfAllBupsToCurrBup() {
+    const tStart = performance.now();
     const N    = N_BREAKUP_DATABASE_RECORDS;
     const bups = this.bups;
 
-    let maxDistL = 0, maxDistT = 0, maxDistK = 0, maxDistA = 0;
 
     if (this.currentlySelectedBreakupId !== DUMPSTER_INVALID) {
+      // Content channel — regime 1, 2 or 3. Fills distancesByLang with values
+      // already normalized to [0,1] and contrast-enhanced.
+      this.activeProvider().fillContentDistances(
+        this.currentlySelectedBreakupId, this.distancesByLang);
+
       const curr         = bups[this.currentlySelectedBreakupId];
-      const currLangData = curr.languageData;
       const currLangTags = curr.languageTags;
       const currKamal    = curr.kamalTags;
       const currAge      = curr.age;
@@ -167,111 +239,128 @@ class BreakupManager {
       const currLen      = curr.summaryLen;
 
       for (let i = 0; i < N; i++) {
-        const distL = bups[i].computeLanguageDistance(currLangData);
-        const distT = bups[i].computeLanguageTagNCommonalities(currLangTags);
-        const distK = bups[i].computeKamalTagCommonalities(currKamal);
-        const distA = bups[i].computeAccessTagCommonalities(currSex, currFault, currInstg, currAccess);
-
-        this.distancesByLang[i]     = distL;
-        this.similaritiesByTag[i]   = distT;
-        this.similaritiesByKamal[i] = distK;
-        this.similaritiesByAccess[i]= distA;
-        this.distancesByAge[i]      = bups[i].computeAgeDifference(currAge);
-        this.distancesByLen[i]      = Math.abs(currLen - bups[i].summaryLen) / 255.0;
-
-        if (distL > maxDistL) maxDistL = distL;
-        if (distT > maxDistT) maxDistT = distT;
-        if (distK > maxDistK) maxDistK = distK;
-        if (distA > maxDistA) maxDistA = distA;
+        this.similaritiesByTag[i]    = bups[i].computeLanguageTagNCommonalities(currLangTags);
+        this.similaritiesByKamal[i]  = bups[i].computeKamalTagCommonalities(currKamal);
+        this.similaritiesByAccess[i] = bups[i].computeAccessTagCommonalities(
+                                         currSex, currFault, currInstg, currAccess);
+        this.distancesByAge[i]       = bups[i].computeAgeDifference(currAge);
+        this.distancesByLen[i]       = Math.abs(currLen - bups[i].summaryLen) / 255.0;
       }
     }
 
-    // Normalize lang distances; compute mean + stddev for contrast enhancement
-    const nBupsf = N;
-    this.meanLangDistance = 0;
-    this.stdvLangDistance = 0;
+    // Per-channel max-normalization is gone: standardizing each channel in
+    // _blendStandardizedChannels() supersedes it, and mean/sd is far less
+    // outlier-sensitive than dividing by a single extreme value.
+    this._blendStandardizedChannels();
 
-    if (maxDistL > 0.0) {
-      const normalizeL = 1.0 / maxDistL;
-      for (let i = 0; i < N; i++) {
-        this.meanLangDistance += (this.distancesByLang[i] *= normalizeL);
-      }
-      this.meanLangDistance /= nBupsf;
+    this.lastComputeMs = performance.now() - tStart;
+    // Seed the average on the first pass, else it reads ~0 until it converges.
+    this.avgComputeMs = (this.avgComputeMs === 0)
+      ? this.lastComputeMs
+      : (0.9 * this.avgComputeMs + 0.1 * this.lastComputeMs);
+  }
 
-      for (let i = 0; i < N; i++) {
-        const dm = this.distancesByLang[i] - this.meanLangDistance;
-        this.stdvLangDistance += dm * dm;
-      }
-      this.stdvLangDistance = Math.sqrt((1.0 / (nBupsf - 1.0)) * this.stdvLangDistance);
-    }
+  //=====================================================================================
+  // Read one record's six raw channel values into out[]. Order must match
+  // _chShares / _chNames. Every channel is "higher === more similar".
+  _deriveChannels(i, out) {
+    out[0] = 1.0 - this.distancesByLang[i];                 // content
+    out[1] = 1.0 - this.distancesByLen[i];                  // length
+    out[2] = (this.distancesByAge[i] === DUMPSTER_INVALID)   // age
+           ? AGE_UNKNOWN_SCORE
+           : 1.0 - Math.min(AGE_DISTANCE_CAP, this.distancesByAge[i]) / AGE_DISTANCE_CAP;
+    out[3] = this.similaritiesByTag[i];                     // langTags
+    out[4] = this.similaritiesByKamal[i];                   // kamalTags
+    out[5] = this.similaritiesByAccess[i];                  // accessTags
+    return out;
+  }
 
-    if (maxDistT > 0) {
-      const normalizeT = 1.0 / maxDistT;
-      for (let i = 0; i < N; i++) this.similaritiesByTag[i] *= normalizeT;
-    }
-    if (maxDistK > 0) {
-      const normalizeK = 1.0 / maxDistK;
-      for (let i = 0; i < N; i++) this.similaritiesByKamal[i] *= normalizeK;
-    }
-    if (maxDistA > 0) {
-      const normalizeA = 1.0 / maxDistA;
-      for (let i = 0; i < N; i++) this.similaritiesByAccess[i] *= normalizeA;
-    }
+  //=====================================================================================
+  // Blend the six channels into SIMILARITIES[0..1].
+  //
+  // Each channel is standardized (z-scored) over the valid records first, so the
+  // SIM_SHARE_* constants behave as variance shares rather than arbitrary
+  // multipliers — see dumpster_constants.js. Channels with share 0 are skipped
+  // entirely, and a channel with no spread (sd 0) contributes nothing rather
+  // than exploding.
+  //
+  // Three passes over N, all O(N): channel stats, blend, then rescale to [0,1].
+  _blendStandardizedChannels() {
+    const N    = N_BREAKUP_DATABASE_RECORDS;
+    const bups = this.bups;
+    const NC   = this._nCh;
+    const v    = this._chVal;
+    const w    = this._chWeights;
+    const sum  = this._chSum, sumSq = this._chSumSq;
+    const mean = this._chMean, invSd = this._chInvSd;
 
-    // Contrast enhancement of lang distances: clamp outside ±2 stddevs
-    if (this.stdvLangDistance > 0) {
-      const loVal = Math.min(1, Math.max(0, this.meanLangDistance - 2.25 * this.stdvLangDistance));
-      const hiVal = Math.max(0, Math.min(1, this.meanLangDistance + 2.00 * this.stdvLangDistance));
-      const range = hiVal - loVal;
-      for (let i = 0; i < N; i++) {
-        const val = this.distancesByLang[i];
-        if      (val <= loVal) this.distancesByLang[i] = 0;
-        else if (val >= hiVal) this.distancesByLang[i] = 1;
-        else                   this.distancesByLang[i] = (val - loVal) / range;
-      }
-    }
+    for (let c = 0; c < NC; c++) { sum[c] = 0; sumSq[c] = 0; }
 
-    // Weighted similarity score
-    let maxSimilarity = 0.0;
+    // --- pass 1: per-channel mean and sd over valid records ---
+    let nValid = 0;
     for (let i = 0; i < N; i++) {
-      let theSimilarity = 0.0;
-      if (bups[i].VALID) {
-        const lenDist  = 1.0 - this.distancesByLen[i];
-        const langDist = 1.0 - this.distancesByLang[i];
-        const tagSimil = this.similaritiesByTag[i];
-        const kamSimil = this.similaritiesByKamal[i];
-        const accSimil = this.similaritiesByAccess[i];
-
-        const bTagSimil = (tagSimil > 0);
-        const bkamSimil = (kamSimil > 0);
-
-        let ageDist = 0.0;
-        if (this.distancesByAge[i] !== DUMPSTER_INVALID) {
-          ageDist = 1.0 - Math.min(5.0, this.distancesByAge[i]) / 5.0;
-        }
-
-        if (bTagSimil && !bkamSimil) {
-          theSimilarity = 0.05*lenDist + 0.10*ageDist + 0.20*langDist + 0.30*tagSimil + 0.40*accSimil;
-        } else if (!bTagSimil && bkamSimil) {
-          theSimilarity = 0.05*lenDist + 0.10*ageDist + 0.20*langDist + 0.40*kamSimil + 0.40*accSimil;
-        } else if (bTagSimil && bkamSimil) {
-          theSimilarity = 0.05*lenDist + 0.10*ageDist + 0.20*langDist + 0.30*tagSimil + 0.40*kamSimil + 0.40*accSimil;
-        } else {
-          theSimilarity = 0.05*lenDist + 0.10*ageDist + 0.20*langDist + 0.40*accSimil;
-        }
-
-        if (theSimilarity > maxSimilarity) maxSimilarity = theSimilarity;
+      if (!bups[i].VALID) continue;
+      this._deriveChannels(i, v);
+      for (let c = 0; c < NC; c++) {
+        const x = v[c];
+        sum[c]   += x;
+        sumSq[c] += x * x;
       }
-      this.SIMILARITIES[i] = theSimilarity;
+      nValid++;
+    }
+    if (nValid === 0) {
+      for (let i = 0; i < N; i++) this.SIMILARITIES[i] = 0;
+      return;
+    }
+    for (let c = 0; c < NC; c++) {
+      const m   = sum[c] / nValid;
+      const var_ = Math.max(0, sumSq[c] / nValid - m * m);
+      mean[c]  = m;
+      // A channel that never varies carries no information — zero it out rather
+      // than dividing by ~0 and amplifying float noise into the blend.
+      invSd[c] = (var_ > 1e-12) ? (1.0 / Math.sqrt(var_)) : 0.0;
     }
 
-    if (maxSimilarity < 1.0) {
-      maxSimilarity = Math.pow(maxSimilarity, 0.95);
-    }
-    if (maxSimilarity > 0.0) {
-      for (let i = 0; i < N; i++) {
-        this.SIMILARITIES[i] /= maxSimilarity;
+    // --- pass 2: weighted sum of z-scores; track its own mean and sd ---
+    let sSum = 0, sSumSq = 0;
+    for (let i = 0; i < N; i++) {
+      if (!bups[i].VALID) { this.SIMILARITIES[i] = 0; continue; }
+      this._deriveChannels(i, v);
+      let s = 0;
+      for (let c = 0; c < NC; c++) {
+        if (w[c] === 0) continue;
+        s += w[c] * (v[c] - mean[c]) * invSd[c];
       }
+      this.SIMILARITIES[i] = s;
+      sSum += s; sSumSq += s * s;
+    }
+    const sMean = sSum / nValid;
+    const sSd   = Math.sqrt(Math.max(0, sSumSq / nValid - sMean * sMean));
+
+    // --- pass 3: rescale to [0,1] at mean +/- k*sd ---
+    if (sSd <= 1e-12) {
+      // Degenerate (e.g. every share is 0): flat field rather than NaNs.
+      for (let i = 0; i < N; i++) if (bups[i].VALID) this.SIMILARITIES[i] = 0.5;
+      return;
+    }
+    const lo    = sMean - SIM_CONTRAST_LO_SIGMA * sSd;
+    const range = (SIM_CONTRAST_LO_SIGMA + SIM_CONTRAST_HI_SIGMA) * sSd;
+    const invRange = 1.0 / range;
+    for (let i = 0; i < N; i++) {
+      if (!bups[i].VALID) continue;
+      let t = (this.SIMILARITIES[i] - lo) * invRange;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      this.SIMILARITIES[i] = t;
+    }
+
+    // A record is a perfect match to itself, so pin the selection to exactly 1.0
+    // and let HelpDisplayer read MATCH: 100. It already maximizes every channel,
+    // so this preserves the ranking; without it the self-match lands wherever
+    // the sigma ceiling happens to fall (measured 0.855 to 1.000 across
+    // selections, since the top record sits anywhere from 2.3 to 7.9 sd out).
+    const sel = this.currentlySelectedBreakupId;
+    if (sel !== DUMPSTER_INVALID && sel >= 0 && sel < N && bups[sel].VALID) {
+      this.SIMILARITIES[sel] = 1.0;
     }
   }
 }

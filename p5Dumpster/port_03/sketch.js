@@ -16,8 +16,16 @@ var textsReady = false;
 var _langDataLines, _langTagsLines, _kamalLines, _accessLines;
 var _summaryFile, _histLines;
 var _histbg, _dumpsterimg;
+var _pixelLayoutFiles = [];   // one per PIXELVIEW_LAYOUTS entry; null = classic sort
 
 var _lastInteractionTime = 0;
+
+// Arrow-key auto-repeat for the pixel-view cursor. p5 suppresses the browser's
+// own key repeat (its _onkeydown returns early when the key is already in
+// _downKeys), so keyPressed() fires exactly once per physical press. Holding a
+// key therefore has to be driven from draw() by polling keyIsDown().
+var _arrowHeldKey      = 0;
+var _arrowNextRepeatMs = 0;
 var _balloonClickActive = false;      // true while mouse is held on a balloon
 var _bPixelViewMouseDownInView = false; // true from mouseDown in pixel view until mouseUp
 var _bPixelViewDragActive = false;    // true once mouse has moved >= 20px from click origin
@@ -36,6 +44,20 @@ function preload() {
   pixelFont      = loadFont  ('data/6px2bus.ttf');
   _histbg        = loadImage ('data/hist_980x111.jpg');
   _dumpsterimg   = loadImage ('data/dumpster_980x609.jpg');
+
+  // Precomputed PixelView layouts (keys 7/8/9). A null asset means the classic
+  // four-pass sort; a failed load degrades to it too, so neither is fatal.
+  for (let i = 0; i < PIXELVIEW_LAYOUTS.length; i++) {
+    const path = PIXELVIEW_LAYOUTS[i].asset;
+    if (!path) { _pixelLayoutFiles[i] = null; continue; }
+    _pixelLayoutFiles[i] = loadBytes(path, undefined, (function(idx, p) {
+      return function() {
+        console.warn('Could not load ' + p + ' — layout ' +
+                     PIXELVIEW_LAYOUTS[idx].label + ' will use the classic sort.');
+        _pixelLayoutFiles[idx] = null;
+      };
+    })(i, path));
+  }
 }
 
 //------------------------------------------------------------
@@ -54,19 +76,46 @@ function setup() {
   HBC = new HeartBalloonConnector(PBM, HM);
   DH  = new DumpsterHistogram(pixelFont, 0, HEART_WALL_B, DUMPSTER_APP_W, HISTOGRAM_H,
                                KOS, _histLines, _histbg);
-  PV  = new PixelView(BM, KOS);
+  PV  = new PixelView(BM, KOS,
+          _pixelLayoutFiles.map(function(f) { return f ? f.bytes : null; }));
   HD  = new HelpDisplayer(pixelFont, BM, KOS);
+
+  // ?regime=2 pins a regime at launch — handy for A/B captures, and for an
+  // installation build that should always come up in one mode. Set directly
+  // rather than via setRegime(), since the asset fetch is still in flight.
+  const urlRegime = parseInt(new URLSearchParams(window.location.search).get('regime'));
+  if (REGIME_KEYS.indexOf(urlRegime) !== -1) {
+    BM.requestedRegime = urlRegime;
+  }
+
+  // ?layout=7|8|9 pins the PixelView layout at launch, matching the key digits.
+  const urlLayout = new URLSearchParams(window.location.search).get('layout');
+  if (urlLayout) {
+    const li = PIXELVIEW_LAYOUTS.findIndex(function(L) { return L.key === urlLayout; });
+    if (li !== -1) PV.setLayoutIndex(li);
+  }
+
+  // Embedding assets for regimes 2-4, if present. Absent files are a
+  // no-op: the regime stays unready and BM falls back to regime 1.
+  _tryLoadEmbeddingAssets();
 
   // Text corpus loads in the background; textsReady gates balloon text lookups.
   loadClips(function() {
     textsReady = true;
     console.log('Text snippets loaded:', Object.keys(Files).length);
 
-    // Pick a random valid breakup as the initial selection.
-    let randomId;
-    do { randomId = Math.floor(random(N_BREAKUP_DATABASE_RECORDS_20K)); }
-    while (!BM.bups[randomId].VALID);
-    const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(randomId);
+    // Initial selection: ?sel=N pins it (so two regimes can be compared on the
+    // same breakup), otherwise pick a random valid one.
+    const urlSel = parseInt(new URLSearchParams(window.location.search).get('sel'));
+    let startId;
+    if (Number.isInteger(urlSel) && urlSel >= 0 &&
+        urlSel < N_BREAKUP_DATABASE_RECORDS_20K && BM.bups[urlSel].VALID) {
+      startId = urlSel;
+    } else {
+      do { startId = Math.floor(random(N_BREAKUP_DATABASE_RECORDS_20K)); }
+      while (!BM.bups[startId].VALID);
+    }
+    const heartId = HM.addSelectedBreakupFromOutsideAndGetNewHeartId(startId);
     _enactSelection(heartId);
   });
 }
@@ -99,6 +148,7 @@ function draw() {
 
   // PixelView
   PV.informOfMouse(mouseX, mouseY, mouseIsPressed);
+  _updateArrowRepeat();
   if (_bPixelViewMouseDownInView && mouseIsPressed) {
     if (!_bPixelViewDragActive) {
       const dx = mouseX - _pixelViewClickOriginX;
@@ -115,9 +165,19 @@ function draw() {
 
   if (!_bPixelViewDragActive && !HM.bCurrentlyDraggingSelectedHeart) _autoPlay();
 
-  drawDraft(); 
+  drawRegimeLabel();
+  // drawDraft();
 }
 
+//------------------------------------------------------------
+// Which similarity regime is live, and what a full pass costs. The cost matters
+// because _enactPixelDrag() recomputes every frame — see notes_july27.md.
+function drawRegimeLabel(){
+  noStroke();
+  fill(110);
+  textFont(pixelFont, 6);
+  text(BM.regimeLabel() + '  ' + PV.layoutLabel(), HELP_TEXT_L, DUMPSTER_APP_H - 6);
+}
 
 function drawDraft(){
   textFont("Helvetica");
@@ -132,6 +192,86 @@ function drawDraft(){
   text("DRAFT", 0,0); 
   pop(); 
   textAlign(LEFT);
+}
+
+//------------------------------------------------------------
+// Load whichever embedding assets this build ships, per data/embeddings.json.
+// Going through a manifest means we never request a .bin that isn't there —
+// a bare fetch() of a missing file logs a 404 in the browser's console no
+// matter how the promise rejection is handled.
+function _tryLoadEmbeddingAssets() {
+  fetch(EMBEDDING_MANIFEST_PATH)
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(manifest => {
+      const assets = (manifest && manifest.assets) || {};
+      const regimes = Object.keys(assets);
+      if (regimes.length === 0) {
+        console.log('No embedding assets in this build — regime 1 only. ' +
+                    'Run textanalysis/make_embedding_asset.py to add regimes 2-4.');
+        return;
+      }
+      for (const key of regimes) {
+        const regime = parseInt(key);
+        const entry  = assets[key];
+        const prov   = BM.providers[regime];
+        if (!prov || !entry || !entry.file) continue;
+        prov.assetPath = 'data/' + entry.file;
+        if (entry.label) prov.name = entry.label;
+        _fetchEmbeddingAsset(regime, prov.assetPath);
+      }
+    })
+    .catch(e => console.warn(`Could not read ${EMBEDDING_MANIFEST_PATH} — ` +
+                             `regime 1 only. (${e.message})`));
+}
+
+function _fetchEmbeddingAsset(regime, assetPath) {
+  fetch(assetPath)
+    .then(r => r.ok ? r.arrayBuffer() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(buf => {
+      if (BM.loadEmbeddingAsset(regime, buf) && BM.requestedRegime === regime) {
+        BM.computeSimilarityOfAllBupsToCurrBup();
+        _refreshSimilarityViews();
+      }
+    })
+    .catch(e => console.warn(`Regime ${regime}: could not load ${assetPath} — ${e.message}. ` +
+                             `Check that data/embeddings.json matches what is on disk.`));
+}
+
+//------------------------------------------------------------
+// Push freshly recomputed similarities into the views, without pushing a new
+// balloon or spawning a heart (used when the regime changes under us).
+function _refreshSimilarityViews() {
+  const bupId = KOS.currentSelectedBreakupId;
+  if (bupId === DUMPSTER_INVALID) return;
+  HM.refreshHeartColors(BM, bupId);
+  PV.updateImage();
+}
+
+//------------------------------------------------------------
+// Called every frame. The initial step still comes from keyPressed(), so a tap
+// responds immediately; this only supplies the repeats after ARROW_REPEAT_DELAY.
+function _updateArrowRepeat() {
+  const arrows = [LEFT_ARROW, RIGHT_ARROW, UP_ARROW, DOWN_ARROW];
+  let held = 0;
+  for (let i = 0; i < arrows.length; i++) {
+    if (keyIsDown(arrows[i])) { held = arrows[i]; break; }
+  }
+  if (held === 0) { _arrowHeldKey = 0; return; }
+
+  const now = millis();
+  if (held !== _arrowHeldKey) {
+    // Newly pressed (or switched direction): keyPressed() has already moved one
+    // step, so just schedule when repeating should begin.
+    _arrowHeldKey = held;
+    _arrowNextRepeatMs = now + ARROW_REPEAT_DELAY_MS;
+    return;
+  }
+  // Single step per frame at most, so a long stall cannot burst-scroll.
+  if (now >= _arrowNextRepeatMs) {
+    PV.sendArrowKey(held);
+    _arrowNextRepeatMs = now + ARROW_REPEAT_RATE_MS;
+    _lastInteractionTime = now;
+  }
 }
 
 //------------------------------------------------------------
@@ -305,6 +445,19 @@ function mouseMoved() {
 
 function keyPressed() {
   _lastInteractionTime = millis();
+
+  // Digit keys: 1-4 pick the similarity regime, 7-9 pick the PixelView layout.
+  // Off by default — see ENABLE_DEBUG_KEYS. ?regime= / ?layout= still work.
+  if (ENABLE_DEBUG_KEYS && key >= '1' && key <= '9') {
+    if (REGIME_KEYS.indexOf(parseInt(key)) !== -1) {
+      BM.setRegime(parseInt(key));
+      _refreshSimilarityViews();
+      return;
+    }
+    const li = PIXELVIEW_LAYOUTS.findIndex(function(L) { return L.key === key; });
+    if (li !== -1) { PV.setLayoutIndex(li); return; }
+  }
+
   PV.sendArrowKey(keyCode);
 
   if (keyCode === ENTER && PV.bMouseInView) {

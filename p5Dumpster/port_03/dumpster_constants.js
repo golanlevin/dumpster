@@ -27,8 +27,113 @@ const   PIXELVIEW_L        = 1;
 const   PIXELVIEW_T        = 1;
 const   PIXELVIEW_SCALE    = 3;
 const   MALE_BLUE_AMOUNT   = 45;
+// Lists which embedding assets this build actually ships, so the app never
+// requests a .bin that isn't there. Written by textanalysis/make_embedding_asset.py.
+const   EMBEDDING_MANIFEST_PATH = 'data/embeddings.json';
+//----------------------------------
+// Similarity blend. Six channels, combined in computeSimilarityOfAllBupsToCurrBup().
+//
+// These are *variance shares*, not raw multipliers. Each channel is z-scored
+// across the valid records before weighting, so a channel set to 0.55 really
+// does account for ~55% of the variation the viewer sees. (Exactly true if the
+// channels are uncorrelated; measured |r| <= 0.12 between them here, so a good
+// approximation.) They need not sum to 1 — they are normalized internally — but
+// keeping them summing to 1 lets you read them as percentages.
+//
+// These are *ceilings*, not guarantees. A channel with no spread for a given
+// selection carries no information and is skipped, its share redistributed over
+// the live channels. That happens a lot, because the tag channels go flat
+// whenever the selected record has no tags of that kind — measured over 120
+// selections: kamalTags dead 61.7% of the time, age 45.0%, langTags 38.3%,
+// accessTags 6.7%, content never. So content's realized share runs above its
+// nominal 0.55 (measured ~67%).
+//
+// Why shares rather than weights: before standardization the channels had wildly
+// different scales and firing rates, so nominal weight bore no relation to
+// effect. The 2005 weights (content 0.20, length 0.05, age 0.10, langTags 0.30,
+// kamalTags 0.40, accessTags 0.40) actually produced this:
+//
+//   channel      variance share   zero for
+//   content           6.5%          1.5%
+//   length            0.3%          0.0%   <- near-constant, did nothing
+//   age               1.2%         88.8%   <- unknown age scored 0, not neutral
+//   langTags          3.9%         94.7%
+//   kamalTags        12.0%         97.5%   <- 12% of variance from 2.5% of records
+//   accessTags       76.2%         49.7%   <- dominated everything
+//
+// i.e. ~76% shared demographic tags, ~6.5% what the texts actually said.
+// Drop-one analysis: removing langTags took the top-20's mean content distance
+// from 0.111 to 0.035, the single biggest gain; removing kamalTags made it
+// slightly worse (0.121), so kamal is mildly helping and is kept.
+const   SIM_SHARE_CONTENT     = 0.55;  // active regime's text-similarity channel
+const   SIM_SHARE_ACCESS_TAGS = 0.25;  // shared sex/fault/instigator/themes
+const   SIM_SHARE_AGE         = 0.10;  // age closeness, capped at AGE_DISTANCE_CAP
+const   SIM_SHARE_KAMAL_TAGS  = 0.10;  // shared kamal category bits
+const   SIM_SHARE_LANG_TAGS   = 0.00;  // shared language bitflags — retired, see above
+const   SIM_SHARE_LENGTH      = 0.00;  // summary-length closeness — retired, see above
+
+// Age difference at or beyond which two records count as maximally far apart.
+const   AGE_DISTANCE_CAP   = 5.0;
+
+// Score for the age channel when either record's age is unknown (age === 0).
+// computeAgeDifference() returns DUMPSTER_INVALID there; the 2005 code left the
+// term at 0.0, i.e. treated "unknown" as *maximally dissimilar*, penalising the
+// 36.7% of records with no age. 0.5 treats it as neutral. Set 0.0 for the
+// original behaviour.
+const   AGE_UNKNOWN_SCORE  = 0.5;
+
+// Final mapping of the blended score into [0,1]. The blend is a weighted sum of
+// z-scores, so it is centred near 0 with sd near 1; these clamp it at
+// mean -/+ k*sd and rescale. Dividing by the raw maximum instead (as the 2005
+// code did) squashes everything, because the selected record is identical to
+// itself and therefore sits many sd above the rest of the corpus.
+const   SIM_CONTRAST_LO_SIGMA = 2.5;
+const   SIM_CONTRAST_HI_SIGMA = 3.0;
 const   HISTOGRAM_H        = DUMPSTER_APP_H - PIXELVIEW_H*PIXELVIEW_SCALE;
 const   PIXELVIEW_B        = PIXELVIEW_T + PIXELVIEW_H*PIXELVIEW_SCALE;
+
+//----------------------------------
+// PixelView spatial layouts, switchable at runtime with keys 7/8/9 (or
+// ?layout=7). Built offline by textanalysis/make_pixel_layout.py: a 2D UMAP of
+// the clip embeddings, grid-rectified with a Linear Assignment (Jonker-
+// Volgenant) solve *within* each group. The macro scaffolding — age bands top to
+// bottom, sex ribbons, instigator runs — is inherited unchanged from the classic
+// four-pass sort; only the ordering inside each group becomes semantic.
+//
+// Dropping a field from the grouping enlarges the groups, so the semantic layout
+// gets more room but that attribute stops being spatially legible:
+//
+//   grouping              groups   >=100 clips cover   LAP solve
+//   age,sex,instigator      278         82.7%            1.5 s
+//   age,sex                 102         95.0%           13.8 s
+//
+// `asset: null` means run PixelIndexer's original four sorts, which are still
+// present and are also the fallback if an asset is missing or fails to parse.
+const   PIXELVIEW_LAYOUTS = [
+  { key: '7', label: 'SORT-2005', asset: null },
+  { key: '8', label: 'LAP-A/S/I', asset: 'data/pixel_layout_lap_asi.bin' },
+  { key: '9', label: 'LAP-A/S',   asset: 'data/pixel_layout_lap_as.bin'  },
+];
+const   PIXELVIEW_LAYOUT_DEFAULT = 2;   // LAP-A/S: most semantically coherent (-12.7% vs random)
+
+// Development key bindings: 1-4 switch the similarity regime, 7-9 the PixelView
+// layout. Off for exhibition so a visitor cannot change the piece's behaviour.
+// The ?regime= and ?layout= URL parameters still work either way.
+const   ENABLE_DEBUG_KEYS = false;
+
+// Arrow-key auto-repeat for the pixel-view cursor, in ms: how long to hold
+// before repeating starts, then the interval between steps. Repeats are capped
+// at one per frame, so the effective rate is min(1000/RATE, frameRate).
+const   ARROW_REPEAT_DELAY_MS = 220;
+const   ARROW_REPEAT_RATE_MS  = 45;
+
+// Nonlinearity applied to similarity before it becomes PixelView luminance.
+// >1 darkens and expands the top of the range, so only close matches stay bright
+// and the field reads as a sparse constellation rather than an even wash; <1
+// brightens and flattens. Chosen by eye with a mouseY sweep. Folded into the LUT
+// exponents in PixelView._constructLUTs() rather than applied per pixel, since
+// pow(pow(x,g),p) === pow(x,g*p) — free, and it avoids quantizing twice.
+const   PIXELVIEW_LUMINANCE_GAMMA = 1.43;
 
 //----------------------------------
 // Bottom-left strip: mag loupe + help text on black, tucked under the pixel

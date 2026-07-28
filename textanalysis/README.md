@@ -52,3 +52,44 @@ For cleaning up html garbage in the text, unzip text.zip, put it in this folder,
 embed_text_2g is the umap embedding of 2 grams of each clip
 
 
+
+---
+
+## 2026 addition: similarity regimes for the app (see `notes_july27.md`)
+
+The app's content-similarity channel is pluggable (regimes 1/2/3, keys `1`/`2`/`3`).
+Regimes 2 and 3 are fed by binary `DMPE` assets generated here.
+
+| Script | Needs venv? | Purpose |
+|---|---|---|
+| `make_embedding_asset.py` | no | Any embedding table → `DMPE` int8 binary + manifest entry |
+| `make_sbert_embeddings.py` | **yes** | Corpus → sentence-transformer vectors (`output/vect_sbert.txt`) |
+
+### Regime 2 — word2vec bigrams (128D)
+
+Uses `output/vect_2g.txt`, already present. No venv needed:
+
+```sh
+python3 make_embedding_asset.py
+# -> p5Dumpster/port_03/data/bigram_w2v_128_int8.bin  (2.45 MB)
+```
+
+### Regime 3 — sentence transformer (384D)
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt          # sentence-transformers; ~1 GB installed
+
+python make_sbert_embeddings.py          # -> output/vect_sbert.txt
+python make_embedding_asset.py --input output/vect_sbert.txt \
+    --regime 3 --output sbert_384_int8.bin --label SBERT-384
+# -> p5Dumpster/port_03/data/sbert_384_int8.bin  (7.3 MB)
+```
+
+Model is `BAAI/bge-small-en-v1.5`, cached in `models/` (gitignored). Downloaded once from
+HuggingFace; `--offline` afterwards refuses network access entirely. **The app itself never
+contacts a server** — it loads a static binary. These deps are build-time only.
+
+`requirements.txt` pins the direct dependency; `requirements-lock.txt` has the full resolved
+tree as installed 2026-07-27 on Python 3.14.5, for reproducing the exact build later.
